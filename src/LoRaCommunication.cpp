@@ -62,14 +62,13 @@ LoRaCommunication::LoRaCommunication() {
 bool LoRaCommunication::begin() {
     Logger::log("✓ LoRa: Initialisation E220-JP...");
     
-#ifdef LORA_MODE_CONFIGURATION
-    Logger::log("⚙️  MODE: CONFIGURATION (première installation)");
+    Logger::log("⚙️  LoRa mode will be determined by the M0/M1 switch position.");
     Logger::log("");
-#else
-    Logger::log("📡 MODE: NORMAL (transmission/réception)");
+    Logger::log("INFO: M0/M1 controlled by HARDWARE SWITCH on module");
+    Logger::log("  -> Switch ON = configuration mode");
+    Logger::log("  -> Switch OFF = normal mode");
     Logger::log("");
-#endif
-    
+
 #ifdef LORA_USE_SOFTWARE_M0M1
     // Configure M0 and M1 pins as outputs (si contrôle logiciel activé)
     pinMode(LORA_M0_PIN, OUTPUT);
@@ -106,37 +105,33 @@ bool LoRaCommunication::begin() {
     Logger::log("✓ LoRa: Port série vérifié et nettoyé");
     Logger::log("");
     
-#ifdef LORA_MODE_CONFIGURATION
-    // === MODE CONFIGURATION: Programmer le module ===
-    Logger::log("⚙️  CONFIGURATION DU MODULE LoRa...");
-    Logger::log("");
-    
-    // === TEST DE COMMUNICATION UART (rapide) ===
+    // Unified runtime behavior: test UART, prepare config and attempt to apply it.
+    // If the module is in CONFIG mode (M0/M1=HIGH) the configuration will be applied.
+    // If the module is in NORMAL mode (M0/M1=LOW) the InitLoRaSetting() call will
+    // typically fail, and we fall back to using the existing configuration.
+
+    // === UART COMMUNICATION TEST ===
     Logger::log("🔍 Test de communication UART...");
-    
-    // Quick test with known working configuration
     Serial2.write(0xC1);
     Serial2.write(0xC1);
     Serial2.write(0xC1);
     Serial2.flush();
     delay(300);
-    
+
     if (Serial2.available()) {
-        Logger::log("✓ Module LoRa E220-JP répond correctement!");
-        // Clear the response
+        Logger::log("✓ Module LoRa E220-JP répond correctement (UART test).");
         while (Serial2.available()) Serial2.read();
     } else {
-        Logger::log("⚠️  Pas de réponse immédiate (normal si module occupé)");
+        Logger::log("ℹ️  Pas de réponse immédiate au test UART (possible si switch OFF)");
     }
-    
+
     Logger::log("");
-    
+
     // Set default configuration values
     lora.SetDefaultConfigValue(loraConfig);
-    
+
     // Configure LoRa E220-JP parameters
-    //uint16_t ownAddress = (LORA_ADDRESS_H << 8) | LORA_ADDRESS_L;
-    loraConfig.own_address = 0x0000;  // Adresse unique du joystick (pour WOR)
+    loraConfig.own_address = 0x0000;  // Adresse joystick / broadcast
     loraConfig.baud_rate = BAUD_9600;
     loraConfig.air_data_rate = BW125K_SF9;
     loraConfig.subpacket_size = SUBPACKET_200_BYTE;
@@ -144,97 +139,47 @@ bool LoRaCommunication::begin() {
     loraConfig.transmitting_power = TX_POWER_13dBm;
     loraConfig.own_channel = LORA_CHANNEL;
     loraConfig.rssi_byte_flag = RSSI_BYTE_ENABLE;
-    loraConfig.transmission_method_type = UART_P2P_MODE;  // Mode transparent (désactive WOR)
+    loraConfig.transmission_method_type = UART_P2P_MODE;
     loraConfig.lbt_flag = LBT_DISABLE;
-    loraConfig.wor_cycle = WOR_500MS;  // Ignoré en mode TT, mais requis
+    loraConfig.wor_cycle = WOR_500MS;
     loraConfig.encryption_key = 0x1234;
-    loraConfig.target_address = 0x0000;  // Broadcast mode (comme dans l'exemple M5Stack)
+    loraConfig.target_address = 0x0000;
     loraConfig.target_channel = LORA_CHANNEL;
-    
-    Logger::log("✓ LoRa: Configuration préparée");
-    Logger::logf("   - Adresse joystick: 0x%04X", 0x0000);
+
+    Logger::log("✓ LoRa: Configuration prepared");
     Logger::logf("   - Canal: %d (920.6 MHz)", LORA_CHANNEL);
-    Logger::log("   - Air Data Rate: BW125K_SF9");
-    Logger::log("   - Mode: UART P2P (Point-to-Point)");
-    Logger::log("   - Puissance: 13 dBm");
     Logger::log("");
-    Logger::log("⏳ LoRa: Envoi configuration au module...");
-    
-    // Apply configuration to module (M0=HIGH, M1=HIGH required)
+
+    Logger::log("⏳ LoRa: Sending configuration to module (will succeed only if switch ON)...");
     int result = lora.InitLoRaSetting(loraConfig);
-    
-    if (result != 0) {
-        Logger::logf("✗ LoRa: Échec configuration (code erreur: %d)", result);
+
+    if (result == 0) {
+        Logger::log("# LoRa: Module E220-JP configured successfully!");
         Logger::log("");
-        Logger::log("⚠️  Le module répond mais refuse la configuration");
-        Logger::log("   Causes possibles:");
-        Logger::log("   - M0/M1 pas en position HAUTE");
-        Logger::log("   - Module occupé (réinitialisez-le)");
-        Logger::log("   - Configuration invalide");
-        
-        return false;
-    }
-    
-    Logger::log("✓ LoRa: Module E220-JP configuré avec succès!");
-    Logger::log("");
-    Logger::log("ℹ️  IMPORTANT: Pour les prochains démarrages:");
-    Logger::log("   1. Commentez #define LORA_MODE_CONFIGURATION");
-    Logger::log("   2. Décommentez #define LORA_MODE_NORMAL");
-    Logger::log("   3. Mettez le switch M0/M1 sur OFF (mode normal)");
-    Logger::log("");
-    
+        Logger::log("ℹ️  IMPORTANT: Pour les prochains démarrages, mettez le switch M0/M1 sur OFF.");
+        Logger::log("");
+
 #ifdef LORA_USE_SOFTWARE_M0M1
-    // Set M0=LOW and M1=LOW for normal mode (transmission/reception)
-    digitalWrite(LORA_M0_PIN, LOW);
-    digitalWrite(LORA_M1_PIN, LOW);
-    Logger::log("✓ LoRa: Mode normal activé (M0=LOW, M1=LOW via GPIO)");
-    delay(200);
+        // If we control M0/M1 via GPIO, set them LOW for normal mode
+        digitalWrite(LORA_M0_PIN, LOW);
+        digitalWrite(LORA_M1_PIN, LOW);
+        Logger::log("✓ LoRa: Mode normal activé (M0=LOW, M1=LOW via GPIO)");
+        delay(200);
 #endif
-    
-#else
-    // === MODE NORMAL: Utiliser la configuration existante ===
-    Logger::log("📡 MODE NORMAL: Utilisation de la config du module");
-    Logger::log("");
-    
-    // Set default configuration values (juste pour avoir loraConfig cohérent)
-    lora.SetDefaultConfigValue(loraConfig);
-    
-    //uint16_t ownAddress = (LORA_ADDRESS_H << 8) | LORA_ADDRESS_L;
-    loraConfig.own_address = 0x0000;  // Adresse unique du joystick (pour WOR)
-    loraConfig.baud_rate = BAUD_9600;
-    loraConfig.air_data_rate = BW125K_SF9;
-    loraConfig.subpacket_size = SUBPACKET_200_BYTE;
-    loraConfig.rssi_ambient_noise_flag = RSSI_AMBIENT_NOISE_ENABLE;
-    loraConfig.transmitting_power = TX_POWER_13dBm;
-    loraConfig.own_channel = 0x00;
-    loraConfig.rssi_byte_flag = RSSI_BYTE_ENABLE;
-    loraConfig.transmission_method_type = UART_P2P_MODE;  // Point-to-Point avec adressage
-    loraConfig.lbt_flag = LBT_DISABLE;
-    loraConfig.wor_cycle = WOR_500MS;  // Cycle rapide
-    loraConfig.encryption_key = 0x1234;  // CLÉ VALIDÉE PAR TEST!
-    loraConfig.target_address = 0x0000;  // Broadcast mode (comme dans l'exemple M5Stack)
-    loraConfig.target_channel = 0x00;
-    
-    Logger::log("✓ LoRa: Configuration locale préparée");
-    Logger::logf("   - Adresse joystick: 0x%04X", 0x0001);
-    Logger::logf("   - Canal: %d (920.6 MHz)", LORA_CHANNEL);
-    Logger::log("");
-    
-    // IMPORTANT: Appeler InitLoRaSetting même en mode NORMAL pour initialiser
-    // le mutex interne de la bibliothèque (requis pour SendFrame/RecieveFrame)
-    // Le module refusera la config (normal, switch sur OFF), mais le mutex sera créé
-    Logger::log("⚙️  LoRa: Initialisation mutex interne...");
-    int result = lora.InitLoRaSetting(loraConfig);
-    
-    if (result != 0) {
-        // C'est normal en mode NORMAL - le module refuse car M0/M1 = LOW
-        Logger::log("   (Module refuse config - normal en mode transmission)");
+
     } else {
-        Logger::log("✓ Module accepte la reconfig (switch était sur ON?)");
+        Logger::log("📡 LoRa: Configuration command failed (assume switch OFF - normal mode).");
+        Logger::log(String("   Result code: ") + String(result));
+        Logger::log("");
+        Logger::log("   Using existing module configuration for normal operation.");
+        Logger::log("");
+        // Still call InitLoRaSetting to initialize internal mutex/state of library
+        // (some libraries require this even if module rejects config)
+        lora.InitLoRaSetting(loraConfig);
     }
-    Logger::log("✓ LoRa: Mutex initialisé, prêt pour communication");
+
+    Logger::log("✓ LoRa: Ready to operate");
     Logger::log("");
-#endif
     
     Logger::log("✓ LoRa: Prêt à recevoir");
     Logger::log("");
