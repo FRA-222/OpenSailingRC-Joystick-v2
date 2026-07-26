@@ -5,6 +5,14 @@
  * @date 2025
  */
 
+/*
+ * Open Source License Notice
+ * SPDX-License-Identifier: GPL-3.0-only
+ * This file is part of the OpenSailingRC-Joystick-v2 project and is distributed
+ * under the GNU General Public License v3.0.
+ * See https://www.gnu.org/licenses/gpl-3.0.html for full license text.
+ */
+
 #include "DisplayManager.h"
 #include "Logger.h"
 #include "HardwareConfig.h"
@@ -31,8 +39,9 @@ uint16_t DisplayManager::swapColorChannels(uint16_t rgb565) {
     return (new_r << 11) | (new_g << 5) | new_b;
 }
 
-DisplayManager::DisplayManager(BuoyStateManager& buoyManager)
-    : buoyMgr(buoyManager) {
+DisplayManager::DisplayManager(BuoyStateManager& buoyManager, const char* firmwareVersion)
+    : buoyMgr(buoyManager),
+      firmwareVersion((firmwareVersion != nullptr) ? firmwareVersion : "2.0.0") {
     displayEnabled = true;
     lastUpdateTime = 0;
     currentBrightness = DEFAULT_BRIGHTNESS;
@@ -57,7 +66,8 @@ bool DisplayManager::begin() {
     M5.Display.setFont(&fonts::Font2);
     M5.Display.drawString("Joystick v2  -  Core2", cx, 120);
     M5.Display.setFont(&fonts::Font0);
-    M5.Display.drawString("Demarrage...", cx, 150);
+    M5.Display.drawString("v" + firmwareVersion, cx, 150);
+    M5.Display.drawString("Demarrage...", cx, 175);
 
     delay(1500);
     M5.Display.fillScreen(TFT_BLACK);

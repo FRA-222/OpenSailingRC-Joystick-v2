@@ -1,5 +1,10 @@
 # 🎮 OpenSailingRC BuoyJoystick - v2.0
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Platform: ESP32](https://img.shields.io/badge/Platform-ESP32-green.svg)](https://www.espressif.com/en/products/socs/esp32)
+[![Hardware: M5Stack Core2](https://img.shields.io/badge/Hardware-M5Stack%20Core2-orange.svg)](https://docs.m5stack.com/en/core/core2)
+[![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen.svg)](https://github.com/FRA-222/OpenSailingRC-Joystick-v2/releases)
+
 ## ✅ État d'Avancement
 
 ### Modules Implémentés
@@ -590,6 +595,15 @@ Bouées actives: 1/6
 - **Flash utilisée** : ~879KB (26.3%)
 - **Fréquence loop** : 10Hz
 - **Fréquence affichage** : 2Hz
+
+---
+
+## Licence
+
+Ce projet est distribué sous la licence **GNU General Public License v3.0**.
+
+- Texte complet de la licence : **[LICENSE](LICENSE)**
+- Référence officielle : <https://www.gnu.org/licenses/gpl-3.0.html>
 
 ---
 

@@ -11,6 +11,14 @@
  * - Heading and speed
  */
 
+/*
+ * Open Source License Notice
+ * SPDX-License-Identifier: GPL-3.0-only
+ * This file is part of the OpenSailingRC-Joystick-v2 project and is distributed
+ * under the GNU General Public License v3.0.
+ * See https://www.gnu.org/licenses/gpl-3.0.html for full license text.
+ */
+
 #ifndef DISPLAY_MANAGER_H
 #define DISPLAY_MANAGER_H
 
@@ -38,8 +46,9 @@ public:
     /**
      * @brief Constructor
      * @param buoyManager Reference to buoy state manager
+     * @param firmwareVersion Firmware version string displayed on startup screen
      */
-    DisplayManager(BuoyStateManager& buoyManager);
+    DisplayManager(BuoyStateManager& buoyManager, const char* firmwareVersion = "2.0.0");
 
     /**
      * @brief Initialize the display
@@ -123,6 +132,7 @@ public:
 
 private:
     BuoyStateManager& buoyMgr;
+    String firmwareVersion;
     bool displayEnabled;
     uint32_t lastUpdateTime;
     uint8_t currentBrightness;
