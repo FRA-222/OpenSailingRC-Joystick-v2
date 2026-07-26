@@ -13,10 +13,11 @@
  */
 enum tEtatsGeneral
 {
-    INIT = 0,
+    IDENTIFICATION = 0,  ///< Doit rester aligné avec l'enum de la bouée (ModeManagement.h)
+    INIT,
     READY,
     MAINTENANCE,
-    HOME_DEFINITION, 
+    HOME_DEFINITION,
     NAV
 };
 

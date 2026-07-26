@@ -151,6 +151,8 @@ String BuoyStateManager::getNavModeName(tEtatsNav mode) {
 
 String BuoyStateManager::getGeneralModeName(tEtatsGeneral mode) {
     switch (mode) {
+        case IDENTIFICATION:
+            return "IDENT";
         case INIT:
             return "INIT";
         case READY:

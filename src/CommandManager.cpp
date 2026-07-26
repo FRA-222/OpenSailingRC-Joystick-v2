@@ -360,6 +360,56 @@ bool CommandManager::generateHeadingDecreaseCommand(uint8_t targetBuoyId) {
 }
 
 /**
+ * @brief Generate and send MAINTENANCE_ENTER command
+ */
+bool CommandManager::generateMaintenanceEnterCommand(uint8_t targetBuoyId) {
+    Logger::logf("\n[CommandManager] Generation commande MAINTENANCE_ENTER pour Bouee #%d", targetBuoyId);
+
+    Command cmd;
+    cmd.targetBuoyId = targetBuoyId;
+    cmd.type = CMD_MAINTENANCE_ENTER;
+    cmd.timestamp = millis();
+
+    currentCommand = cmd;
+    newCommandAvailable = true;
+
+    bool success = comm.sendCommand(targetBuoyId, cmd);
+
+    if (success) {
+        Logger::log("   -> Commande MAINTENANCE_ENTER envoyee avec succes");
+    } else {
+        Logger::log("   -> ERREUR: Echec envoi commande MAINTENANCE_ENTER");
+    }
+
+    return success;
+}
+
+/**
+ * @brief Generate and send MAINTENANCE_EXIT command
+ */
+bool CommandManager::generateMaintenanceExitCommand(uint8_t targetBuoyId) {
+    Logger::logf("\n[CommandManager] Generation commande MAINTENANCE_EXIT pour Bouee #%d", targetBuoyId);
+
+    Command cmd;
+    cmd.targetBuoyId = targetBuoyId;
+    cmd.type = CMD_MAINTENANCE_EXIT;
+    cmd.timestamp = millis();
+
+    currentCommand = cmd;
+    newCommandAvailable = true;
+
+    bool success = comm.sendCommand(targetBuoyId, cmd);
+
+    if (success) {
+        Logger::log("   -> Commande MAINTENANCE_EXIT envoyee avec succes");
+    } else {
+        Logger::log("   -> ERREUR: Echec envoi commande MAINTENANCE_EXIT");
+    }
+
+    return success;
+}
+
+/**
  * @brief Send heartbeat to all active buoys
  */
 uint8_t CommandManager::sendHeartbeatToAllBuoys() {

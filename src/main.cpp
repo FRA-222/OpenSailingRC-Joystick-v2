@@ -317,6 +317,38 @@ void loop() {
         leftDownProcessed = false; // Reset quand joystick revient au centre
     }
 
+    // Détection mouvement joystick GAUCHE (X axis) - Mode MAINTENANCE
+    static bool leftLeftProcessed = false;
+    static bool leftRightProcessed = false;
+
+    int16_t leftX = joystick.getAxisCentered(AXIS_LEFT_X);
+
+    // Joystick GAUCHE vers la GAUCHE : CMD_MAINTENANCE_ENTER
+    if (leftX < -JOYSTICK_THRESHOLD && !leftLeftProcessed)
+    {
+        uint8_t selectedId = buoyState->getSelectedBuoyId();
+        Logger::logf("\n[JS-L] Joystick GAUCHE vers la GAUCHE - MAINTENANCE_ENTER (Bouee #%d)", selectedId);
+        cmdManager->generateMaintenanceEnterCommand(selectedId);
+        leftLeftProcessed = true;
+    }
+    else if (leftX > -JOYSTICK_THRESHOLD / 2)
+    {
+        leftLeftProcessed = false; // Reset quand joystick revient au centre
+    }
+
+    // Joystick GAUCHE vers la DROITE : CMD_MAINTENANCE_EXIT
+    if (leftX > JOYSTICK_THRESHOLD && !leftRightProcessed)
+    {
+        uint8_t selectedId = buoyState->getSelectedBuoyId();
+        Logger::logf("\n[JS-L] Joystick GAUCHE vers la DROITE - MAINTENANCE_EXIT (Bouee #%d)", selectedId);
+        cmdManager->generateMaintenanceExitCommand(selectedId);
+        leftRightProcessed = true;
+    }
+    else if (leftX < JOYSTICK_THRESHOLD / 2)
+    {
+        leftRightProcessed = false; // Reset quand joystick revient au centre
+    }
+
     // ========================================================================
     // JOYSTICK DROIT - Contrôle Throttle et Heading
     // ========================================================================

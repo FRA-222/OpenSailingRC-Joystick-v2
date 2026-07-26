@@ -31,7 +31,9 @@ enum BuoyCommand : uint8_t {
     CMD_NAV_HOME,             ///< Navigate to Home position
     CMD_NAV_STOP,             ///< Stop all movements
     CMD_HOME_VALIDATION,      ///< Validate Home position
-    CMD_HEARTBEAT             ///< Heartbeat to keep connection alive
+    CMD_HEARTBEAT,            ///< Heartbeat to keep connection alive
+    CMD_MAINTENANCE_ENTER,    ///< Enter MAINTENANCE mode (maps to dashboard code "4")
+    CMD_MAINTENANCE_EXIT      ///< Exit MAINTENANCE mode, return to READY (maps to dashboard code "5")
 };
 
 /**
@@ -172,6 +174,20 @@ public:
      * @return true if command was sent successfully
      */
     bool generateHeadingDecreaseCommand(uint8_t targetBuoyId);
+
+    /**
+     * @brief Generate and send MAINTENANCE_ENTER command to a buoy
+     * @param targetBuoyId ID of the buoy to send the command to
+     * @return true if command was sent successfully
+     */
+    bool generateMaintenanceEnterCommand(uint8_t targetBuoyId);
+
+    /**
+     * @brief Generate and send MAINTENANCE_EXIT command to a buoy
+     * @param targetBuoyId ID of the buoy to send the command to
+     * @return true if command was sent successfully
+     */
+    bool generateMaintenanceExitCommand(uint8_t targetBuoyId);
 
     /**
      * @brief Send heartbeat to all active buoys

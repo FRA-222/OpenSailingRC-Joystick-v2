@@ -528,6 +528,8 @@ uint16_t DisplayManager::getNavModeColor(tEtatsNav mode) {
 
 uint16_t DisplayManager::getGeneralModeColor(tEtatsGeneral mode) {
     switch (mode) {
+        case IDENTIFICATION:
+            return TFT_WHITE;
         case INIT:
             return TFT_YELLOW;
         case READY:
