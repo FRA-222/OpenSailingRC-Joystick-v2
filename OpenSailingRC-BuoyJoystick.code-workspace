@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "Navigation GPS",
+			"path": "../Navigation GPS"
+		},
+		{
+			"name": "OpenSailingRC-Anemometer-v2",
+			"path": "../OpenSailingRC-Anemometer-v2"
+		},
+		{
+			"name": "OpenSailingRC-Display",
+			"path": "../OpenSailingRC-Display"
+		}
+	],
+	"settings": {}
+}
