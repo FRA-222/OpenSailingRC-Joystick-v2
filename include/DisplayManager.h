@@ -199,7 +199,7 @@ private:
      * @param text     Text to display
      * @param color    Foreground color
      * @param font     Font to use
-     * @param textSize Text magnification (1 or 2)
+     * @param textSize Text magnification (fractional values allowed, e.g. 1.6)
      * @param datum    Text datum (alignment) for x/y
      * @param x        X anchor
      * @param y        Y anchor
@@ -208,7 +208,7 @@ private:
      * @return true if the field was actually repainted
      */
     bool drawTextField(TextField& field, const char* text, uint16_t color,
-                       const m5gfx::IFont* font, uint8_t textSize, m5gfx::textdatum_t datum,
+                       const m5gfx::IFont* font, float textSize, m5gfx::textdatum_t datum,
                        int16_t x, int16_t y, uint16_t padWidth, bool force = false);
 
     /**

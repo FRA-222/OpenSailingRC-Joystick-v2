@@ -34,8 +34,10 @@ static const uint8_t I2C_ADDR_JOYSTICK = 0x52;
 static const uint8_t I2C_ADDR_BYTEBUTTON = 0x47;
 
 // ByteButton : 8 touches (bits actifs à LOW) = sélection directe de la
-// bouée 0-7 (touche i -> bouée #i). Une LED RGB par touche, pilotée par
-// registres (librairie M5Unit-ByteButton) :
+// bouée 0-7, ordonnées de gauche à droite (touche la plus à gauche ->
+// bouée #1). Attention : le bit 0 du masque est la touche la plus à DROITE,
+// l'inversion est faite par byteButtonSlot() dans JoystickManager.cpp.
+// Une LED RGB par touche, pilotée par registres (librairie M5Unit-ByteButton) :
 static const uint8_t BYTEBUTTON_REG_LED_BRIGHTNESS = 0x10;  // + n (1 octet/LED)
 static const uint8_t BYTEBUTTON_REG_LED_MODE = 0x19;        // 0 = piloté par l'hôte
 static const uint8_t BYTEBUTTON_REG_RGB888 = 0x20;          // + n*4 (4 octets/LED)

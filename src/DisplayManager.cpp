@@ -252,7 +252,7 @@ void DisplayManager::invalidateCachedFields() {
 }
 
 bool DisplayManager::drawTextField(TextField& field, const char* text, uint16_t color,
-                                   const m5gfx::IFont* font, uint8_t textSize, m5gfx::textdatum_t datum,
+                                   const m5gfx::IFont* font, float textSize, m5gfx::textdatum_t datum,
                                    int16_t x, int16_t y, uint16_t padWidth, bool force) {
     if (!force && field.valid && field.color == color && strcmp(field.text, text) == 0) {
         return false;  // Rien n'a changé : ne pas repeindre (source principale du flickering)
@@ -440,13 +440,14 @@ void DisplayManager::drawNavigationState(const BuoyState& state, bool force) {
     String generalModeName = buoyMgr.getGeneralModeName(state.generalMode);
     drawTextField(cache.generalMode, generalModeName.c_str(),
                   getGeneralModeColor(state.generalMode),
-                  &fonts::Font2, 1, TC_DATUM, SCR_W / 2, MODE_Y + 1, 200, force);
+                  &fonts::Font4, 1, TC_DATUM, SCR_W / 2, MODE_Y + 1, 200, force);
 
-    // Mode de navigation : élément le plus important de l'écran
+    // Mode de navigation : élément le plus important de l'écran, donc plus gros
+    // que le mode général, mais sans écraser complètement ce dernier.
     String navModeName = buoyMgr.getNavModeName(state.navigationMode);
     drawTextField(cache.navMode, navModeName.c_str(),
                   getNavModeColor(state.navigationMode),
-                  &fonts::Font4, 2, MC_DATUM, SCR_W / 2, MODE_Y + 43, 300, force);
+                  &fonts::Font4, 1.6f, MC_DATUM, SCR_W / 2, MODE_Y + 48, 300, force);
 }
 
 void DisplayManager::drawHeadingSpeed(float heading, float speed) {

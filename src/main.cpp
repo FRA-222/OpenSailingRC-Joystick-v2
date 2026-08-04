@@ -265,7 +265,8 @@ void loop() {
     // ========================================================================
     joystick.update();
     
-    // ByteButton : sélection directe de la bouée (touche i -> bouée #i)
+    // ByteButton : sélection directe de la bouée, de gauche à droite
+    // (touche la plus à gauche -> bouée #1, la plus à droite -> bouée #8)
     int8_t byteBtnIdx = joystick.getByteButtonPressedIndex();
     if (byteBtnIdx >= 0) {
         Logger::logf("\n[BYTE-BTN] Touche %d pressee - Selection Bouee #%d", byteBtnIdx + 1, byteBtnIdx);

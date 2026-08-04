@@ -358,6 +358,21 @@ float JoystickManager::getBattery2Voltage() {
     return batteryVoltage[1];
 }
 
+/**
+ * @brief Convertit un numéro de bouée (0-7) en index matériel de touche/LED
+ *
+ * Le bit 0 du masque du ByteButton correspond à la touche la plus à DROITE.
+ * On inverse pour que la bouée #1 soit la touche la plus à gauche et la
+ * bouée #8 la plus à droite. La conversion est involutive : la même fonction
+ * sert dans les deux sens (touche -> bouée et bouée -> LED).
+ */
+static inline uint8_t byteButtonSlot(uint8_t index) {
+    if (index >= 8) {
+        return 0xFF;  // aucune sélection (ledSelectedIndex = 0xFF) : aucune LED allumée
+    }
+    return 7 - index;
+}
+
 void JoystickManager::initByteButtonLeds() {
     if (byteButtonAddrEffective == 0xFF) {
         return;
@@ -368,7 +383,7 @@ void JoystickManager::initByteButtonLeds() {
         uint8_t brightness = BYTEBUTTON_LED_BRIGHTNESS;
         byteButtonBus.writeReg(byteButtonAddrEffective,
                                BYTEBUTTON_REG_LED_BRIGHTNESS + i, &brightness, 1);
-        uint32_t color = (i == ledSelectedIndex) ? BYTEBUTTON_COLOR_SELECTED : 0;
+        uint32_t color = (i == byteButtonSlot(ledSelectedIndex)) ? BYTEBUTTON_COLOR_SELECTED : 0;
         byteButtonBus.writeReg(byteButtonAddrEffective,
                                BYTEBUTTON_REG_RGB888 + i * 4, (uint8_t*)&color, 4);
     }
@@ -380,7 +395,7 @@ void JoystickManager::setBuoySelectionLed(uint8_t index) {
         return;  // sera appliqué à la détection tardive du module
     }
     for (uint8_t i = 0; i < 8; i++) {
-        uint32_t color = (i == ledSelectedIndex) ? BYTEBUTTON_COLOR_SELECTED : 0;
+        uint32_t color = (i == byteButtonSlot(ledSelectedIndex)) ? BYTEBUTTON_COLOR_SELECTED : 0;
         byteButtonBus.writeReg(byteButtonAddrEffective,
                                BYTEBUTTON_REG_RGB888 + i * 4, (uint8_t*)&color, 4);
     }
@@ -391,7 +406,7 @@ int8_t JoystickManager::getByteButtonPressedIndex() {
         bool wasReleased = (byteMaskPrev & (1 << i)) != 0;
         bool isPressed = (byteMaskCurrent & (1 << i)) == 0;
         if (wasReleased && isPressed) {
-            return i;
+            return byteButtonSlot(i);  // touche la plus à gauche -> bouée #1
         }
     }
     return -1;
