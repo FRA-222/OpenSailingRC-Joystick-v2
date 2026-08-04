@@ -15,8 +15,8 @@ Home Definition → Nav, plus l'état Maintenance).
 ┌──────────────────────────────────────────────────────────────────────┐
 │                     M5Stack Core2 + 2 Unit Joystick                  │
 │                                                                      │
-│    🟡 Bouton JAUNE GAUCHE                    🟡 Bouton JAUNE DROIT   │
-│        Memo Home Cmde                          Home Validation Cmde  │
+│    🔴 Bouton ROUGE GAUCHE                    🔵 Bouton BLEU DROIT    │
+│      Home Validation Cmde                        Memo Home Cmde      │
 │                                                                      │
 │   ┌────────────────────┐              ┌────────────────────┐        │
 │   │  JOYSTICK GAUCHE   │              │  JOYSTICK DROIT    │        │
@@ -81,20 +81,20 @@ vitesse de lacet (yawRate). Aucune commande du joystick ne peut forcer ce passag
   le passage en Ready**.
 - Sur l'écran : `INIT` puis `READY`.
 
-### 3.2 Les deux boutons jaunes
+### 3.2 Les deux boutons du Dual Button
 
 | Action | Commande envoyée | Nom dans l'automate bouée | Effet |
 |--------|------------------|---------------------------|-------|
-| 🟡 **Bouton jaune GAUCHE** | `CMD_INIT_HOME` | **Memo Home Cmde** | La bouée mémorise **sa position GPS courante** comme point Home et passe en **« Home Definition »** |
-| 🟡 **Bouton jaune DROIT** | `CMD_HOME_VALIDATION` | **Home Validation Cmde** | La bouée **verrouille** le Home et passe en **« Nav »** (démarrage en NAV_STOP) |
+| 🔵 **Bouton bleu DROIT** | `CMD_INIT_HOME` | **Memo Home Cmde** | La bouée mémorise **sa position GPS courante** comme point Home et passe en **« Home Definition »** |
+| 🔴 **Bouton rouge GAUCHE** | `CMD_HOME_VALIDATION` | **Home Validation Cmde** | La bouée **verrouille** le Home et passe en **« Nav »** (démarrage en NAV_STOP) |
 
 **Détail des transitions :**
 
-- `Ready` **→** `Home Definition` : bouton jaune GAUCHE, **si la position GPS est valide
+- `Ready` **→** `Home Definition` : bouton bleu DROIT, **si la position GPS est valide
   (Locate OK)**. Si le GPS n'est pas fixé, rien ne se passe.
-- `Home Definition` **→** `Home Definition` (boucle) : bouton jaune GAUCHE de nouveau —
+- `Home Definition` **→** `Home Definition` (boucle) : bouton bleu DROIT de nouveau —
   cela **redéfinit** le Home sur la position courante. Utile pour corriger un placement.
-- `Home Definition` **→** `Nav` : bouton jaune DROIT, **si un Home valide a été mémorisé**.
+- `Home Definition` **→** `Nav` : bouton rouge GAUCHE, **si un Home valide a été mémorisé**.
   Le Home est alors verrouillé (`lockedHome`) pour toute la session de navigation.
 
 > ℹ️ La transition *« Pos Home Cmde »* du schéma (Home défini par des coordonnées
@@ -108,9 +108,9 @@ vitesse de lacet (yawRate). Aucune commande du joystick ne peut forcer ce passag
 2. Sélectionner la bouée (appui sur écran)
 3. Attendre l'affichage READY (GPS/MAG/YAW verts)
 4. Placer physiquement la bouée à l'emplacement voulu du point Home
-5. 🟡 Bouton jaune GAUCHE  → écran : HOME_DEFINITION
+5. 🔵 Bouton bleu DROIT    → écran : HOME_DEFINITION
    (répétable autant que nécessaire tant que le placement n'est pas bon)
-6. 🟡 Bouton jaune DROIT   → écran : NAV / NAV_STOP
+6. 🔴 Bouton rouge GAUCHE  → écran : NAV / NAV_STOP
    → la bouée est prête à naviguer
 ```
 
@@ -222,8 +222,8 @@ connaître pour ne pas les confondre avec un dysfonctionnement.
 
 | Contrôle | Action | Commande | Nom automate bouée | Depuis l'état | Vers l'état |
 |----------|--------|----------|--------------------|---------------|-------------|
-| 🟡 Bouton jaune gauche | Appui | `CMD_INIT_HOME` | Memo Home Cmde | Ready / Home Definition | Home Definition |
-| 🟡 Bouton jaune droit | Appui | `CMD_HOME_VALIDATION` | Home Validation Cmde | Home Definition | Nav |
+| 🔵 Bouton bleu droit | Appui | `CMD_INIT_HOME` | Memo Home Cmde | Ready / Home Definition | Home Definition |
+| 🔴 Bouton rouge gauche | Appui | `CMD_HOME_VALIDATION` | Home Validation Cmde | Home Definition | Nav |
 | 🕹️ Gauche | ⬅ Gauche | `CMD_MAINTENANCE_ENTER` | Maintenance Cmde | Ready / Home Definition | Maintenance |
 | 🕹️ Gauche | ➡ Droite | `CMD_MAINTENANCE_EXIT` | Resume Ready Cmde | Maintenance | Ready |
 | 🕹️ Gauche | ⬆ Haut | `CMD_NAV_CAP` | — | Nav | NAV_CAP |
@@ -246,8 +246,8 @@ connaître pour ne pas les confondre avec un dysfonctionnement.
 | Symptôme | Cause probable | Action |
 |----------|----------------|--------|
 | La bouée reste en `INIT` | GPS non fixé, magnétomètre ou gyro KO, ou DL absent | Vérifier les voyants GPS/MAG/YAW ; attendre le fix GPS ; vérifier que le joystick est allumé |
-| Le bouton jaune gauche ne fait rien | GPS non valide (Locate KO), ou bouée en Maintenance | Attendre le fix GPS ; sortir de Maintenance (🕹️ gauche ➡) |
-| Le bouton jaune droit ne fait rien | Aucun Home mémorisé | Appuyer d'abord sur le bouton jaune gauche |
+| Le bouton bleu droit ne fait rien | GPS non valide (Locate KO), ou bouée en Maintenance | Attendre le fix GPS ; sortir de Maintenance (🕹️ gauche ➡) |
+| Le bouton rouge gauche ne fait rien | Aucun Home mémorisé | Appuyer d'abord sur le bouton bleu droit |
 | La bouée ne sort pas de Maintenance | Calibration magnétique absente ou type de batteries non renseigné | Effectuer la calibration / la configuration via le dashboard |
 | Le Home a disparu après une manœuvre | Passage par Maintenance ou perte de DL en Ready | Refaire la phase § 3.2 |
 | La bouée part seule vers le Home | Perte totale du Datalink | Se rapprocher, vérifier l'alimentation du joystick |

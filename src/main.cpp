@@ -274,18 +274,18 @@ void loop() {
         display->displayBuoySelection();
     }
 
-    // DualButton GAUCHE : Initialisation du HOME
+    // DualButton GAUCHE (rouge) : Validation HOME -> passage en NAV
     if (joystick.wasButtonPressed(BTN_LEFT)) {
-        uint8_t selectedId = buoyState->getSelectedBuoyId();
-        Logger::logf("\n[DUAL-L] Bouton DualButton GAUCHE presse - Envoi CMD_INIT_HOME a Bouee #%d", selectedId);
-        cmdManager->generateInitHomeCommand(selectedId);
+        uint8_t activeBuoy = buoyState->getSelectedBuoyId();
+        Logger::logf("\n[DUAL-L] Bouton DualButton GAUCHE (rouge) presse - Envoi HOME_VALIDATION a Bouee #%d", activeBuoy);
+        cmdManager->generateHomeValidationCommand(activeBuoy);
     }
 
-    // DualButton DROIT : Validation HOME
+    // DualButton DROIT (bleu) : Initialisation du HOME
     if (joystick.wasButtonPressed(BTN_RIGHT)) {
-        uint8_t activeBuoy = buoyState->getSelectedBuoyId();
-        Logger::logf("\n[DUAL-R] Bouton DualButton DROIT presse - Envoi HOME_VALIDATION a Bouee #%d", activeBuoy);
-        cmdManager->generateHomeValidationCommand(activeBuoy);
+        uint8_t selectedId = buoyState->getSelectedBuoyId();
+        Logger::logf("\n[DUAL-R] Bouton DualButton DROIT (bleu) presse - Envoi CMD_INIT_HOME a Bouee #%d", selectedId);
+        cmdManager->generateInitHomeCommand(selectedId);
     }
 
     // Bouton d'appui du stick GAUCHE : CMD_NAV_HOLD

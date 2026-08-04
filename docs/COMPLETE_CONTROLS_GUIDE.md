@@ -9,9 +9,9 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    M5Stack Atom S3 + JoyStick                   │
 │                                                                 │
-│         Bouton Jaune                    Bouton Jaune           │
+│         Bouton Rouge                    Bouton Bleu             │
 │           GAUCHE                           DROIT                │
-│         [INIT_HOME]                  [HOME_VALIDATION]          │
+│      [HOME_VALIDATION]                   [INIT_HOME]            │
 │                                                                 │
 │    ┌───────────────┐                  ┌───────────────┐        │
 │    │   JOYSTICK    │                  │   JOYSTICK    │        │
@@ -35,8 +35,8 @@
 
 | Contrôle | Type | Action | Commande | Fonction |
 |----------|------|--------|----------|----------|
-| **🟡 Bouton Jaune Gauche** | Pression | Simple | `CMD_INIT_HOME` | Initialise position HOME |
-| **🟡 Bouton Jaune Droit** | Pression | Simple | `CMD_HOME_VALIDATION` | Valide position HOME |
+| **🔴 Bouton Rouge Gauche** | Pression | Simple | `CMD_HOME_VALIDATION` | Valide position HOME |
+| **🔵 Bouton Bleu Droit** | Pression | Simple | `CMD_INIT_HOME` | Initialise position HOME |
 | **🕹️ Joystick Gauche** | Mouvement | ⬆️ Haut | `CMD_NAV_CAP` | Mode navigation par cap |
 | **🕹️ Joystick Gauche** | Mouvement | ⬇️ Bas | `CMD_NAV_HOME` | Retour au HOME |
 | **🕹️ Joystick Gauche** | Bouton | 🔘 Appui | `CMD_NAV_HOLD` | Maintien position |
@@ -54,9 +54,9 @@
 ```
 1. [Écran Atom] → Sélectionner la bouée
 2. Positionner physiquement la bouée au point HOME souhaité
-3. [Bouton Jaune GAUCHE] → CMD_INIT_HOME
+3. [Bouton Bleu DROIT] → CMD_INIT_HOME
    └─ La bouée enregistre sa position GPS actuelle
-4. [Bouton Jaune DROIT] → CMD_HOME_VALIDATION
+4. [Bouton Rouge GAUCHE] → CMD_HOME_VALIDATION
    └─ La bouée valide et confirme le point HOME
 ```
 
@@ -222,7 +222,7 @@ Portée:               ~100m en champ libre
   Bouée ID: 0
 ✓ 1 bouée(s) active(s)
 
-[L] Bouton jaune GAUCHE presse - Envoi CMD_INIT_HOME a Bouee #0
+[DUAL-R] Bouton DualButton DROIT (bleu) presse - Envoi CMD_INIT_HOME a Bouee #0
 [CommandManager] Generation commande INIT_HOME pour Bouee #0
    -> Commande HOME envoyee avec succes
 
@@ -241,8 +241,8 @@ Portée:               ~100m en champ libre
 
 ## 🧪 Checklist de Test
 
-- [ ] **Bouton Jaune Gauche** : CMD_INIT_HOME envoyée
-- [ ] **Bouton Jaune Droit** : CMD_HOME_VALIDATION envoyée
+- [ ] **Bouton Bleu Droit** : CMD_INIT_HOME envoyée
+- [ ] **Bouton Rouge Gauche** : CMD_HOME_VALIDATION envoyée
 - [ ] **Joystick Gauche HAUT** : CMD_NAV_CAP envoyée une seule fois
 - [ ] **Joystick Gauche BAS** : CMD_NAV_HOME envoyée une seule fois
 - [ ] **Bouton Joystick Gauche** : CMD_NAV_HOLD envoyée
@@ -260,7 +260,7 @@ Portée:               ~100m en champ libre
 
 ## 📚 Documentation Détaillée
 
-- **[HOME_VALIDATION_BUTTON.md](HOME_VALIDATION_BUTTON.md)** - Commande HOME_VALIDATION (Bouton Jaune Droit)
+- **[HOME_VALIDATION_BUTTON.md](HOME_VALIDATION_BUTTON.md)** - Commande HOME_VALIDATION (Bouton Rouge Gauche)
 - **[LEFT_JOYSTICK_NAV_COMMANDS.md](LEFT_JOYSTICK_NAV_COMMANDS.md)** - Commandes navigation (Joystick Gauche)
 - **[RIGHT_JOYSTICK_THROTTLE_HEADING.md](RIGHT_JOYSTICK_THROTTLE_HEADING.md)** - 🆕 Commandes throttle/heading (Joystick Droit)
 - **[ARCHITECTURE.md](../ARCHITECTURE.md)** - Architecture complète du système

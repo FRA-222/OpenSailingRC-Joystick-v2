@@ -176,6 +176,7 @@ private:
         int16_t batteryIcon = -1;
 
         // Champs texte
+        TextField joystickBattery;
         TextField buoyName;
         TextField sourceTag;
         TextField temperature;
@@ -250,6 +251,17 @@ private:
      * Green = OK, Red = KO.
      */
     void drawSensorLEDs(const BuoyState& state, bool force);
+
+    /**
+     * @brief Draw the joystick's own battery level in the header (top left)
+     *
+     * Read from M5.Power (Core2 internal battery), not from the buoy telemetry.
+     * Prefixed with "JS" to distinguish it from the buoy battery shown in the
+     * temperature band.
+     *
+     * @param force true to redraw even if the value did not change
+     */
+    void drawJoystickBattery(bool force);
     
     /**
      * @brief Convertit les couleurs RGB565 pour compenser la permutation de l'écran AtomS3

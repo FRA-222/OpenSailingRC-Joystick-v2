@@ -21,7 +21,7 @@
  * ── Mise en page de l'écran principal (Core2 320x240) ────────────────────────
  *
  *  y=0    ┌───────────────────────────────────────────────┐
- *         │  NOM DE LA BOUEE                 [RX: LoRa]   │  Header
+ *         │ JS 87%      NOM DE LA BOUEE      [RX: LoRa]   │  Header
  *  y=34   ├───────────────────────────────────────────────┤
  *         │     (o)GPS         (o)MAG        (o)YAW       │  Capteurs
  *  y=86   ├───────────────────────────────────────────────┤
@@ -235,6 +235,7 @@ void DisplayManager::drawStaticLayout() {
 }
 
 void DisplayManager::invalidateCachedFields() {
+    cache.joystickBattery.valid = false;
     cache.buoyName.valid = false;
     cache.sourceTag.valid = false;
     cache.temperature.valid = false;
@@ -331,6 +332,32 @@ void DisplayManager::drawHeader(bool connected, bool usingESPNow) {
     uint16_t tagColor = !connected ? TFT_RED : (usingESPNow ? TFT_CYAN : TFT_GREEN);
     drawTextField(cache.sourceTag, tag, tagColor,
                   &fonts::Font2, 1, TR_DATUM, SCR_W - MARGIN, 9, 100, nameRedrawn);
+
+    // Batterie du joystick, en haut à gauche. Redessinée avec le nom pour la même
+    // raison que le badge RX.
+    drawJoystickBattery(nameRedrawn);
+}
+
+void DisplayManager::drawJoystickBattery(bool force) {
+    int32_t level = M5.Power.getBatteryLevel();
+    bool charging = (M5.Power.isCharging() == m5::Power_Class::is_charging);
+
+    char buffer[16];
+    if (level < 0) {
+        // Niveau non disponible sur ce matériel
+        snprintf(buffer, sizeof(buffer), "JS --");
+    } else if (charging) {
+        snprintf(buffer, sizeof(buffer), "JS +%ld%%", (long)level);
+    } else {
+        snprintf(buffer, sizeof(buffer), "JS %ld%%", (long)level);
+    }
+
+    // En charge : cyan, sinon code couleur habituel du niveau
+    uint16_t color = charging ? TFT_CYAN
+                              : (level < 0 ? TFT_DARKGREY : getBatteryColor((uint8_t)level));
+
+    drawTextField(cache.joystickBattery, buffer, color,
+                  &fonts::Font2, 1, TL_DATUM, MARGIN, 9, 80, force);
 }
 
 void DisplayManager::drawSensorLEDs(const BuoyState& state, bool force) {
