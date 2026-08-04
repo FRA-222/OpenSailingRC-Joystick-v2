@@ -21,7 +21,7 @@
  * ── Mise en page de l'écran principal (Core2 320x240) ────────────────────────
  *
  *  y=0    ┌───────────────────────────────────────────────┐
- *         │  NOM DE LA BOUEE                    [LoRa]    │  Header
+ *         │  NOM DE LA BOUEE                 [RX: LoRa]   │  Header
  *  y=34   ├───────────────────────────────────────────────┤
  *         │     (o)GPS         (o)MAG        (o)YAW       │  Capteurs
  *  y=86   ├───────────────────────────────────────────────┤
@@ -321,14 +321,16 @@ void DisplayManager::drawHeader(bool connected, bool usingESPNow) {
 
     // Nom de la bouée centré, en grand
     bool nameRedrawn = drawTextField(cache.buoyName, buoyName.c_str(), nameColor,
-                                     &fonts::Font4, 1, TC_DATUM, SCR_W / 2, 3, 180);
+                                     &fonts::Font4, 1, TC_DATUM, SCR_W / 2, 3, 140);
 
-    // Badge de la source de données, aligné à droite. Redessiné avec le nom : le
-    // padding du nom peut mordre sur le badge si celui-ci est large.
-    const char* tag = !connected ? "OFF" : (usingESPNow ? "ESP-NOW" : "LoRa");
+    // Badge de la source des données affichées (RX), aligné à droite. C'est bien
+    // la provenance de la télémétrie et non le canal de commande : en mode LoRa,
+    // l'ESP-NOW est écouté passivement et prioritaire s'il est plus frais.
+    // Redessiné avec le nom : le padding du nom peut mordre sur le badge.
+    const char* tag = !connected ? "RX: --" : (usingESPNow ? "RX: ESP-NOW" : "RX: LoRa");
     uint16_t tagColor = !connected ? TFT_RED : (usingESPNow ? TFT_CYAN : TFT_GREEN);
     drawTextField(cache.sourceTag, tag, tagColor,
-                  &fonts::Font2, 1, TR_DATUM, SCR_W - MARGIN, 9, 70, nameRedrawn);
+                  &fonts::Font2, 1, TR_DATUM, SCR_W - MARGIN, 9, 100, nameRedrawn);
 }
 
 void DisplayManager::drawSensorLEDs(const BuoyState& state, bool force) {
