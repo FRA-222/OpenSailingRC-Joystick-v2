@@ -17,6 +17,48 @@
 #include "Logger.h"
 #include "HardwareConfig.h"
 
+/*
+ * ── Mise en page de l'écran principal (Core2 320x240) ────────────────────────
+ *
+ *  y=0    ┌───────────────────────────────────────────────┐
+ *         │  NOM DE LA BOUEE                    [LoRa]    │  Header
+ *  y=34   ├───────────────────────────────────────────────┤
+ *         │     (o)GPS         (o)MAG        (o)YAW       │  Capteurs
+ *  y=86   ├───────────────────────────────────────────────┤
+ *         │  23C                                    87%   │  Temp / Batterie
+ *  y=114  ├───────────────────────────────────────────────┤
+ *         │                    READY                      │  Mode general
+ *         │                  NAV CAP                      │  Mode navigation
+ *  y=186  ├───────────────────────────────────────────────┤
+ *         │    DIST            CAP            THR         │  Consignes
+ *         │    125m            270d           45%         │
+ *  y=240  └───────────────────────────────────────────────┘
+ */
+namespace {
+    constexpr int16_t SCR_W = DISPLAY_WIDTH;    // 320
+    constexpr int16_t SCR_H = DISPLAY_HEIGHT;   // 240
+    constexpr int16_t MARGIN = 8;
+
+    // Origine verticale de chaque bande
+    constexpr int16_t HEADER_H = 34;   // Hauteur du header (bande y=0)
+    constexpr int16_t LED_Y    = 36;
+    constexpr int16_t TEMP_Y   = 88;
+    constexpr int16_t MODE_Y   = 116;
+    constexpr int16_t CMD_Y    = 188;
+
+    // Séparateurs (dessinés une fois par redraw complet)
+    constexpr int16_t SEP1_Y = 34, SEP2_Y = 86, SEP3_Y = 114, SEP4_Y = 186;
+
+    // Trois colonnes réparties sur la largeur (LEDs capteurs et consignes)
+    constexpr int16_t COL_1 = SCR_W / 6;         // 53
+    constexpr int16_t COL_2 = SCR_W / 2;         // 160
+    constexpr int16_t COL_3 = (SCR_W * 5) / 6;   // 266
+
+    // Icône batterie (contour statique, remplissage variable)
+    constexpr int16_t BATT_ICON_X = SCR_W - MARGIN - 34;
+    constexpr int16_t BATT_ICON_Y = TEMP_Y + 4;
+}
+
 /**
  * Convertit RGB565 pour compenser la permutation de l'écran AtomS3
  * L'écran AtomS3 fait: R→G, G→B, B→R
@@ -117,248 +159,264 @@ void DisplayManager::displayMainScreen() {
     bool forceUpdate = false;
     if (cache.firstUpdate || cache.buoyId != buoyId) {
         M5.Display.fillScreen(TFT_BLACK);
+        invalidateCachedFields();
+        if (connected) {
+            drawStaticLayout();
+        }
         cache.firstUpdate = false;
         cache.buoyId = buoyId;
-        cache.connected = !connected;  // Force update
         forceUpdate = true;
     }
     
     // Détection de la source de données active
     bool usingESPNow = buoyMgr.isUsingESPNowData();
     
-    // Header avec nom de la bouée (couleur selon connexion et source)
-    // Toujours redessiner si un statut de commande est actif ou si la source change
-    uint32_t currentTime = millis();
-    bool hasActiveCommandStatus = (commandStatus != CommandStatus::IDLE && 
-                                     (currentTime - commandStatusTime) < STATUS_DISPLAY_DURATION);
-    
-    if (cache.connected != connected || cache.usingESPNow != usingESPNow || 
-        forceUpdate || hasActiveCommandStatus) {
-        drawHeader(connected, usingESPNow);
-        if (!hasActiveCommandStatus) {
-            cache.connected = connected;
+    bool connectionChanged = (cache.connected != connected);
+
+    // Changement d'état de connexion : le contenu sous le header change
+    // complètement (bandes de données <-> message d'attente)
+    if (connectionChanged && !forceUpdate) {
+        M5.Display.fillRect(0, HEADER_H, SCR_W, SCR_H - HEADER_H, TFT_BLACK);
+        invalidateCachedFields();
+        if (connected) {
+            drawStaticLayout();
         }
-        cache.usingESPNow = usingESPNow;
+        forceUpdate = true;
     }
-    
+
+    drawHeader(connected, usingESPNow);
+    // Toujours mémoriser l'état : sinon, tant qu'un statut de commande est actif,
+    // connectionChanged resterait vrai à chaque cycle et effacerait l'écran.
+    cache.connected = connected;
+    cache.usingESPNow = usingESPNow;
+
     if (connected) {
-        // Calcul batterie pour comparaison
-        uint8_t batteryPercent = (state.remainingCapacity / 3000.0) * 100;
-        if (batteryPercent > 100) batteryPercent = 100;
-        
-        // Indicateurs LED des capteurs (ligne 2)
-        if (cache.gpsOk != state.gpsOk || cache.headingOk != state.headingOk || 
-            cache.yawRateOk != state.yawRateOk || forceUpdate) {
-            drawSensorLEDs(state);
-            cache.gpsOk = state.gpsOk;
-            cache.headingOk = state.headingOk;
-            cache.yawRateOk = state.yawRateOk;
-        }
-        
-        // Température et Batterie (ligne 3)
-        if (cache.temperature != state.temperature || cache.batteryPercent != batteryPercent || forceUpdate) {
-            drawTempBattery(state);
-            cache.temperature = state.temperature;
-            cache.batteryPercent = batteryPercent;
-        }
-        
-        // Modes général et navigation (ligne 4-5)
-        if (cache.generalMode != state.generalMode || cache.navigationMode != state.navigationMode || forceUpdate) {
-            drawNavigationState(state);
-            cache.generalMode = state.generalMode;
-            cache.navigationMode = state.navigationMode;
-        }
-        
-        // Distance to consigne, Heading et Throttle (ligne 6)
-        if (cache.distanceToCons != state.distanceToCons || 
-            cache.autoPilotTrueHeadingCmde != state.autoPilotTrueHeadingCmde ||
-            cache.autoPilotThrottleCmde != state.autoPilotThrottleCmde || forceUpdate) {
-            drawDistanceThrottle(state);
-            cache.distanceToCons = state.distanceToCons;
-            cache.autoPilotTrueHeadingCmde = state.autoPilotTrueHeadingCmde;
-            cache.autoPilotThrottleCmde = state.autoPilotThrottleCmde;
-        }
-    } else {
+        // Chaque zone ne repeint que les champs dont la valeur affichée a changé
+        drawSensorLEDs(state, forceUpdate);
+        drawTempBattery(state, forceUpdate);
+        drawNavigationState(state, forceUpdate);
+        drawDistanceThrottle(state, forceUpdate);
+    } else if (forceUpdate) {
         M5.Display.setTextDatum(MC_DATUM);
         M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-        M5.Display.setFont(&fonts::Font4);  // Police plus grande (était Font2)
-        M5.Display.drawString("Waiting...", 64, 64);
+        M5.Display.setFont(&fonts::Font4);
+        M5.Display.setTextSize(2);
+        M5.Display.drawString("Waiting...", SCR_W / 2, SCR_H / 2);
+        M5.Display.setTextSize(1);
     }
+}
+
+void DisplayManager::drawStaticLayout() {
+    const int16_t x0 = MARGIN;
+    const int16_t w = SCR_W - MARGIN * 2;
+    M5.Display.drawFastHLine(x0, SEP1_Y, w, TFT_DARKGREY);
+    M5.Display.drawFastHLine(x0, SEP2_Y, w, TFT_DARKGREY);
+    M5.Display.drawFastHLine(x0, SEP3_Y, w, TFT_DARKGREY);
+    M5.Display.drawFastHLine(x0, SEP4_Y, w, TFT_DARKGREY);
+
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextDatum(TC_DATUM);
+
+    // Libellés des LEDs capteurs
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5.Display.drawString("GPS", COL_1, LED_Y + 30);
+    M5.Display.drawString("MAG", COL_2, LED_Y + 30);
+    M5.Display.drawString("YAW", COL_3, LED_Y + 30);
+
+    // Libellés des consignes
+    M5.Display.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    M5.Display.drawString("DIST", COL_1, CMD_Y + 2);
+    M5.Display.drawString("CAP",  COL_2, CMD_Y + 2);
+    M5.Display.drawString("THR",  COL_3, CMD_Y + 2);
+
+    // Contour de l'icône batterie (le remplissage est mis à jour avec la valeur)
+    M5.Display.drawRect(BATT_ICON_X, BATT_ICON_Y, 30, 15, TFT_WHITE);
+    M5.Display.fillRect(BATT_ICON_X + 30, BATT_ICON_Y + 5, 3, 5, TFT_WHITE);
+}
+
+void DisplayManager::invalidateCachedFields() {
+    cache.buoyName.valid = false;
+    cache.sourceTag.valid = false;
+    cache.temperature.valid = false;
+    cache.battery.valid = false;
+    cache.generalMode.valid = false;
+    cache.navMode.valid = false;
+    cache.distance.valid = false;
+    cache.heading.valid = false;
+    cache.throttle.valid = false;
+    cache.gpsOk = -1;
+    cache.headingOk = -1;
+    cache.yawRateOk = -1;
+    cache.batteryIcon = -1;
+}
+
+bool DisplayManager::drawTextField(TextField& field, const char* text, uint16_t color,
+                                   const m5gfx::IFont* font, uint8_t textSize, m5gfx::textdatum_t datum,
+                                   int16_t x, int16_t y, uint16_t padWidth, bool force) {
+    if (!force && field.valid && field.color == color && strcmp(field.text, text) == 0) {
+        return false;  // Rien n'a changé : ne pas repeindre (source principale du flickering)
+    }
+
+    M5.Display.setFont(font);
+    M5.Display.setTextSize(textSize);
+    M5.Display.setTextDatum(datum);
+    M5.Display.setTextColor(color, TFT_BLACK);
+    // Le padding efface l'ancienne valeur en même temps que la nouvelle est
+    // écrite : pas de fillRect suivi d'un dessin, donc pas de clignotement.
+    M5.Display.setTextPadding(padWidth);
+    M5.Display.drawString(text, x, y);
+    M5.Display.setTextPadding(0);
+    M5.Display.setTextSize(1);
+
+    strncpy(field.text, text, sizeof(field.text) - 1);
+    field.text[sizeof(field.text) - 1] = '\0';
+    field.color = color;
+    field.valid = true;
+    return true;
 }
 
 void DisplayManager::drawHeader(bool connected, bool usingESPNow) {
     uint8_t buoyId = buoyMgr.getSelectedBuoyId();
     String buoyName = buoyMgr.getBuoyName(buoyId);
     
-    Logger::logf("🎨 drawHeader: connected=%d, usingESPNow=%d, buoyId=%d", connected, usingESPNow, buoyId);
-    
-    // Effacer la zone du header
-    M5.Display.fillRect(0, 0, 128, 20, TFT_BLACK);
-    
-    M5.Display.setTextDatum(TC_DATUM);
-    
     // Déterminer la couleur selon l'état de la commande et la connexion
-    uint32_t color;
     uint32_t currentTime = millis();
     uint32_t elapsed = currentTime - commandStatusTime;
-    
+    uint16_t nameColor;
+
     // Vérifier si le statut de commande est récent (moins de 3 secondes)
     bool showCommandStatus = (elapsed < STATUS_DISPLAY_DURATION) && (commandStatus != CommandStatus::IDLE);
-    
+
     if (showCommandStatus) {
         // Afficher l'état de la commande en priorité
         switch (commandStatus) {
             case CommandStatus::SENDING:
-                M5.Display.setTextColor(TFT_BLUE, TFT_BLACK);
+                nameColor = TFT_BLUE;
                 break;
             case CommandStatus::ACK_RECEIVED:
-                M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
+                nameColor = TFT_GREEN;
                 break;
             case CommandStatus::TIMEOUT:
-                M5.Display.setTextColor(TFT_RED, TFT_BLACK);
+                nameColor = TFT_RED;
                 break;
             default:
-                M5.Display.setTextColor(connected ? TFT_GREEN : TFT_RED, TFT_BLACK);
+                nameColor = connected ? TFT_GREEN : TFT_RED;
                 break;
         }
     } else {
         // Afficher l'état de connexion normal
         // Cyan = données ESP-NOW actives, Vert = LoRa seulement, Rouge = déconnecté
         if (connected) {
-            if (usingESPNow) {
-                M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-            } else {
-                M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-            }
+            nameColor = usingESPNow ? TFT_CYAN : TFT_GREEN;
         } else {
-            M5.Display.setTextColor(TFT_RED, TFT_BLACK);
+            nameColor = TFT_RED;
         }
-        
+
         // Réinitialiser le statut après 3 secondes
         if (commandStatus != CommandStatus::IDLE) {
             Logger::logf("   drawHeader: Réinitialisation status IDLE (elapsed=%lu)", elapsed);
             commandStatus = CommandStatus::IDLE;
         }
     }
-    
-    M5.Display.setFont(&fonts::Font4);
-    M5.Display.drawString(buoyName, 64, 2);
+
+    // Nom de la bouée centré, en grand
+    bool nameRedrawn = drawTextField(cache.buoyName, buoyName.c_str(), nameColor,
+                                     &fonts::Font4, 1, TC_DATUM, SCR_W / 2, 3, 180);
+
+    // Badge de la source de données, aligné à droite. Redessiné avec le nom : le
+    // padding du nom peut mordre sur le badge si celui-ci est large.
+    const char* tag = !connected ? "OFF" : (usingESPNow ? "ESP-NOW" : "LoRa");
+    uint16_t tagColor = !connected ? TFT_RED : (usingESPNow ? TFT_CYAN : TFT_GREEN);
+    drawTextField(cache.sourceTag, tag, tagColor,
+                  &fonts::Font2, 1, TR_DATUM, SCR_W - MARGIN, 9, 70, nameRedrawn);
 }
 
-void DisplayManager::drawSensorLEDs(const BuoyState& state) {
-    // Ligne 2 : Indicateurs LED des capteurs
-    const int16_t y = 32;  // Position Y sous le header (ajusté pour Font4)
-    const int16_t ledRadius = 5;  // Rayon de la LED agrandi
-    const int16_t spacing = 42;   // Espacement entre les LEDs
-    
-    // Effacer la zone des LEDs
-    M5.Display.fillRect(0, 22, 128, 35, TFT_BLACK);
-    
-    // Centre de l'écran (128 pixels / 2 = 64)
-    // 3 LEDs espacées : GPS, MAG, YAW
-    const int16_t startX = 64 - spacing;  // Position de la première LED
-    
-    M5.Display.setFont(&fonts::Font2);  // Police plus grande (était Font0)
-    M5.Display.setTextDatum(TC_DATUM);
-    
-    // GPS LED
-    int16_t gpsX = startX;
-    M5.Display.fillCircle(gpsX, y, ledRadius, state.gpsOk ? TFT_GREEN : TFT_RED);
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.drawString("GPS", gpsX, y + 8);
-    
-    // MAG (Heading) LED
-    int16_t magX = startX + spacing;
-    M5.Display.fillCircle(magX, y, ledRadius, state.headingOk ? TFT_GREEN : TFT_RED);
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.drawString("MAG", magX, y + 8);
-    
-    // YAW (YawRate) LED
-    int16_t yawX = startX + spacing * 2;
-    M5.Display.fillCircle(yawX, y, ledRadius, state.yawRateOk ? TFT_GREEN : TFT_RED);
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.drawString("YAW", yawX, y + 8);
+void DisplayManager::drawSensorLEDs(const BuoyState& state, bool force) {
+    // Bande capteurs : 3 LEDs réparties sur toute la largeur.
+    // Les libellés sont statiques (drawStaticLayout) : seules les pastilles
+    // dont l'état a changé sont repeintes.
+    const int16_t ledY = LED_Y + 16;      // Centre des pastilles
+    const int16_t ledRadius = 10;
+
+    struct { bool ok; int8_t& cached; int16_t x; } leds[] = {
+        {state.gpsOk,     cache.gpsOk,     COL_1},
+        {state.headingOk, cache.headingOk, COL_2},
+        {state.yawRateOk, cache.yawRateOk, COL_3},
+    };
+
+    for (auto& led : leds) {
+        if (!force && led.cached == (int8_t)led.ok) {
+            continue;
+        }
+        M5.Display.fillCircle(led.x, ledY, ledRadius, led.ok ? TFT_GREEN : TFT_RED);
+        M5.Display.drawCircle(led.x, ledY, ledRadius, TFT_DARKGREY);
+        led.cached = (int8_t)led.ok;
+    }
 }
 
-void DisplayManager::drawTempBattery(const BuoyState& state) {
-    // Ligne 3 : Température et % Batterie
-    const int16_t y = 58;  // Ajusté pour nouvelle position
-    
-    // Effacer la zone température/batterie
-    M5.Display.fillRect(0, 57, 128, 17, TFT_BLACK);
-    
-    M5.Display.setFont(&fonts::Font2);  // Police plus grande (était Font0)
-    M5.Display.setTextDatum(TL_DATUM);
-    M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-    
-    // Température à gauche
+void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
+    // Bande température (gauche) / batterie (droite)
     char tempBuffer[16];
     snprintf(tempBuffer, sizeof(tempBuffer), "%d%C", state.temperature);
-    M5.Display.drawString(tempBuffer, 2, y);
-    
-    // Batterie à droite (conversion de mAh en %)
+    drawTextField(cache.temperature, tempBuffer, TFT_CYAN,
+                  &fonts::Font4, 1, TL_DATUM, MARGIN, TEMP_Y, 90, force);
+
     uint8_t batteryPercent = (uint8_t)((state.remainingCapacity));
     if (batteryPercent > 100) batteryPercent = 100;
-    
+
     char battBuffer[16];
     snprintf(battBuffer, sizeof(battBuffer), "%d%%", batteryPercent);
-    M5.Display.setTextDatum(TR_DATUM);
-    M5.Display.drawString(battBuffer, 126, y);
+    drawTextField(cache.battery, battBuffer, getBatteryColor(batteryPercent),
+                  &fonts::Font4, 1, TR_DATUM, SCR_W - MARGIN - 40, TEMP_Y, 90, force);
+
+    // Icône batterie tout à droite (contour dessiné une fois par drawStaticLayout)
+    if (force || cache.batteryIcon != batteryPercent) {
+        drawBattery(batteryPercent, BATT_ICON_X, BATT_ICON_Y);
+        cache.batteryIcon = batteryPercent;
+    }
 }
 
-void DisplayManager::drawDistanceThrottle(const BuoyState& state) {
-    // Ligne 6 : Distance, Forced Heading et Throttle
-    const int16_t y = 114;  // Ajusté pour nouvelle position
-    
-    // Effacer la zone distance/heading/throttle
-    M5.Display.fillRect(0, 113, 128, 15, TFT_BLACK);
-    
-    M5.Display.setFont(&fonts::Font2);  // Police plus grande (était Font0)
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    
-    // Distance à gauche
+void DisplayManager::drawDistanceThrottle(const BuoyState& state, bool force) {
+    // Bande basse : 3 colonnes de valeurs (libellés statiques DIST / CAP / THR)
+    const int16_t valueY = CMD_Y + 20;
+
     char distBuffer[16];
-    M5.Display.setTextDatum(TL_DATUM);
     if (state.distanceToCons < 1000) {
         snprintf(distBuffer, sizeof(distBuffer), "%.0fm", state.distanceToCons);
     } else {
         snprintf(distBuffer, sizeof(distBuffer), "%.1fk", state.distanceToCons / 1000.0);
     }
-    M5.Display.drawString(distBuffer, 2, y);
-    
-    // Autopilot Heading au centre
+
     char headingBuffer[16];
-    snprintf(headingBuffer, sizeof(headingBuffer), "%.0fd", state.autoPilotTrueHeadingCmde);
-    M5.Display.setTextDatum(TC_DATUM);
-    M5.Display.drawString(headingBuffer, 64, y);
-    
-    // Throttle à droite
+    snprintf(headingBuffer, sizeof(headingBuffer), "%.0f", state.autoPilotTrueHeadingCmde);
+
     char throttleBuffer[16];
     snprintf(throttleBuffer, sizeof(throttleBuffer), "%d%%", state.autoPilotThrottleCmde);
-    M5.Display.setTextDatum(TR_DATUM);
-    M5.Display.drawString(throttleBuffer, 126, y);
+
+    struct { TextField& field; const char* value; int16_t x; uint16_t color; } cols[] = {
+        {cache.distance, distBuffer,     COL_1, TFT_WHITE},
+        {cache.heading,  headingBuffer,  COL_2, TFT_YELLOW},
+        {cache.throttle, throttleBuffer, COL_3, TFT_WHITE},
+    };
+
+    for (auto& col : cols) {
+        drawTextField(col.field, col.value, col.color,
+                      &fonts::Font4, 1, TC_DATUM, col.x, valueY, 100, force);
+    }
 }
 
-void DisplayManager::drawNavigationState(const BuoyState& state) {
-    // Effacer la zone des modes
-    M5.Display.fillRect(0, 74, 128, 36, TFT_BLACK);
-    
-    // Mode général (ligne 4)
+void DisplayManager::drawNavigationState(const BuoyState& state, bool force) {
+    // Bande des modes : mode général (petit) puis mode navigation (très grand)
     String generalModeName = buoyMgr.getGeneralModeName(state.generalMode);
-    uint16_t generalColor = getGeneralModeColor(state.generalMode);
-    
-    M5.Display.setTextDatum(MC_DATUM);
-    M5.Display.setTextColor(generalColor, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font2);  // Police moyenne
-    M5.Display.drawString(generalModeName, 64, 80);  // Descendu de 2 pixels (76 → 78)
-    
-    // Mode de navigation (ligne 5, plus grand pour meilleure visibilité)
+    drawTextField(cache.generalMode, generalModeName.c_str(),
+                  getGeneralModeColor(state.generalMode),
+                  &fonts::Font2, 1, TC_DATUM, SCR_W / 2, MODE_Y + 1, 200, force);
+
+    // Mode de navigation : élément le plus important de l'écran
     String navModeName = buoyMgr.getNavModeName(state.navigationMode);
-    uint16_t navModeColor = getNavModeColor(state.navigationMode);
-    
-    M5.Display.setTextColor(navModeColor, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font4);  // Police plus grande pour NavigationMode
-    M5.Display.drawString(navModeName, 64, 100);  // Descendu de 2 pixels (96 → 98)
+    drawTextField(cache.navMode, navModeName.c_str(),
+                  getNavModeColor(state.navigationMode),
+                  &fonts::Font4, 2, MC_DATUM, SCR_W / 2, MODE_Y + 43, 300, force);
 }
 
 void DisplayManager::drawHeadingSpeed(float heading, float speed) {
@@ -383,18 +441,14 @@ void DisplayManager::drawBattery(uint8_t batteryLevel, int16_t x, int16_t y) {
     M5.Display.drawRect(x, y, 30, 15, TFT_WHITE);
     M5.Display.fillRect(x + 30, y + 5, 3, 5, TFT_WHITE);
     
-    // Remplit selon le niveau
+    // Remplit selon le niveau, puis efface le reste : les deux rectangles sont
+    // disjoints, la jauge se met à jour sans clignoter
     int fillWidth = (batteryLevel * 26) / 100;
     if (fillWidth > 26) fillWidth = 26;
     M5.Display.fillRect(x + 2, y + 2, fillWidth, 11, color);
-    
-    // Affiche pourcentage
-    M5.Display.setTextDatum(TL_DATUM);
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font0);
-    char buffer[8];
-    sprintf(buffer, "%d%%", batteryLevel);
-    M5.Display.drawString(buffer, x, y + 16);
+    if (fillWidth < 26) {
+        M5.Display.fillRect(x + 2 + fillWidth, y + 2, 26 - fillWidth, 11, TFT_BLACK);
+    }
 }
 
 void DisplayManager::drawGPS(bool locked, int16_t x, int16_t y) {
@@ -447,22 +501,28 @@ void DisplayManager::displayError(const String& message) {
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextDatum(MC_DATUM);
     M5.Display.setTextColor(TFT_RED, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.drawString("ERROR", 64, 40);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.setTextSize(2);
+    M5.Display.drawString("ERROR", SCR_W / 2, 90);
+    M5.Display.setTextSize(1);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font0);
-    M5.Display.drawString(message, 64, 70);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.drawString(message, SCR_W / 2, 150);
+
+    forceRefresh();  // L'écran a été effacé : tout redessiner au prochain update()
 }
 
 void DisplayManager::displayConnecting(const String& message) {
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextDatum(MC_DATUM);
     M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.drawString("CONNECTING", 64, 40);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.drawString("CONNECTING", SCR_W / 2, 95);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font0);
-    M5.Display.drawString(message, 64, 70);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.drawString(message, SCR_W / 2, 145);
+
+    forceRefresh();  // L'écran a été effacé : tout redessiner au prochain update()
 }
 
 void DisplayManager::displayBuoySelection() {
@@ -472,10 +532,12 @@ void DisplayManager::displayBuoySelection() {
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextDatum(MC_DATUM);
     M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.drawString("SELECTED", 64, 40);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.drawString("SELECTED", SCR_W / 2, 85);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.drawString(buoyName, 64, 70);
+    M5.Display.setTextSize(2);
+    M5.Display.drawString(buoyName, SCR_W / 2, 145);
+    M5.Display.setTextSize(1);
     
     // Non-bloquant : l'overlay sera effacé par update() après BUOY_SELECTION_DURATION
     showingBuoySelection = true;
@@ -486,6 +548,7 @@ void DisplayManager::setEnabled(bool enabled) {
     displayEnabled = enabled;
     if (!enabled) {
         M5.Display.fillScreen(TFT_BLACK);
+        forceRefresh();  // Repartir d'un écran complet à la réactivation
     }
 }
 
@@ -560,6 +623,7 @@ void DisplayManager::forceRefresh() {
     cache.buoyId = 255;
     cache.connected = false;
     cache.firstUpdate = true;
+    invalidateCachedFields();
     lastUpdateTime = 0;
 }
 

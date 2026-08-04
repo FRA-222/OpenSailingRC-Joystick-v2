@@ -811,14 +811,11 @@ void LoRaCommunication::processAck(const AckWithStatePacketLora& ack) {
     buoys[index].lastUpdateTime = millis();
     buoys[index].lastRssi = lastRssi;
     
-    // Signal new data available for immediate display update
+    // Signal new data available: DisplayManager::update() picks this flag up and
+    // redraws immediately. Do NOT call forceRefresh() here — it clears the whole
+    // screen and would repaint everything on every incoming frame (flickering).
     newDataAvailable = true;
-    
-    // Force immediate display refresh so the user sees the updated state right away
-    if (displayManager != nullptr) {
-        displayManager->forceRefresh();
-    }
-    
+
     Logger::logf("   ✓ État Bouée #%d mis à jour depuis ACK (genMode=%d, navMode=%d, throttle=%d)",
                  ack.buoyId, ack.generalMode, ack.navigationMode, ack.autoPilotThrottleCmde);
 }
