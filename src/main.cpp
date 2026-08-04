@@ -33,7 +33,7 @@
 // Changer le mode de communication ici :
 // - CommMode::ESP_NOW : Communication ESP-NOW (2.4 GHz, courte portée, rapide)
 // - CommMode::LORA     : Communication LoRa (920 MHz, longue portée, lente)
-#define COMM_MODE CommMode::ESP_NOW
+#define COMM_MODE CommMode::LORA
 
 // ============================================================================
 // CONFIGURATION - DÉCOUVERTE AUTOMATIQUE DES BOUÉES
@@ -417,25 +417,26 @@ void loop() {
     }
 
     // Joystick DROIT vers la DROITE : CMD_HEADING_INCREASE
-    if (rightX > JOYSTICK_THRESHOLD && !rightRightProcessed)
+    // (l'axe X du stick droit est inverse : pousser a droite donne rightX negatif)
+    if (rightX < -JOYSTICK_THRESHOLD && !rightRightProcessed)
     {
         Logger::logf("\n[JS-R] Joystick DROIT vers la DROITE - HEADING_INCREASE (Bouee #%d)", selectedId);
         cmdManager->generateHeadingIncreaseCommand(selectedId);
         rightRightProcessed = true;
     }
-    else if (rightX < JOYSTICK_THRESHOLD / 2)
+    else if (rightX > -JOYSTICK_THRESHOLD / 2)
     {
         rightRightProcessed = false; // Reset
     }
 
     // Joystick DROIT vers la GAUCHE : CMD_HEADING_DECREASE
-    if (rightX < -JOYSTICK_THRESHOLD && !rightLeftProcessed)
+    if (rightX > JOYSTICK_THRESHOLD && !rightLeftProcessed)
     {
         Logger::logf("\n[JS-R] Joystick DROIT vers la GAUCHE - HEADING_DECREASE (Bouee #%d)", selectedId);
         cmdManager->generateHeadingDecreaseCommand(selectedId);
         rightLeftProcessed = true;
     }
-    else if (rightX > -JOYSTICK_THRESHOLD / 2)
+    else if (rightX < JOYSTICK_THRESHOLD / 2)
     {
         rightLeftProcessed = false; // Reset
     }
