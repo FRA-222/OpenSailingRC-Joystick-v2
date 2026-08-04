@@ -357,7 +357,8 @@ void DisplayManager::drawSensorLEDs(const BuoyState& state, bool force) {
 void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
     // Bande température (gauche) / batterie (droite)
     char tempBuffer[16];
-    snprintf(tempBuffer, sizeof(tempBuffer), "%d%C", state.temperature);
+    // state.temperature est un float : "%d" lisait un argument entier inexistant
+    snprintf(tempBuffer, sizeof(tempBuffer), "%.0f C", state.temperature);
     drawTextField(cache.temperature, tempBuffer, TFT_CYAN,
                   &fonts::Font4, 1, TL_DATUM, MARGIN, TEMP_Y, 90, force);
 
