@@ -21,7 +21,8 @@
  */
 enum class CommMode {
     ESP_NOW,    ///< ESP-NOW communication (2.4 GHz, short range)
-    LORA        ///< LoRa communication (920 MHz, long range)
+    LORA_920,   ///< LoRa communication, 920 MHz module (E220-JP)
+    LORA_433    ///< LoRa communication, 433 MHz module (E220-400T22S)
 };
 
 /**
@@ -43,9 +44,23 @@ public:
     
     /**
      * @brief Get mode name as string
-     * @return Mode name ("ESP-NOW" or "LoRa")
+     * @return Mode name ("ESP-NOW", "LoRa 920 MHz" or "LoRa 433 MHz")
      */
     static const char* getModeName();
+
+    /**
+     * @brief Tell whether a mode uses the LoRa transport
+     *
+     * Both LoRa bands share the whole protocol stack and differ only by the
+     * radio configuration: use this for everything common, and an explicit test
+     * on LORA_920 / LORA_433 only where the band actually matters.
+     *
+     * @param mode Mode to test
+     * @return true for LORA_920 and LORA_433
+     */
+    static constexpr bool isLoRa(CommMode mode) {
+        return mode == CommMode::LORA_920 || mode == CommMode::LORA_433;
+    }
     
 private:
     static CommMode currentMode;

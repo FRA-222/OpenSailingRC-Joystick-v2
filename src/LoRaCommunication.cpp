@@ -27,7 +27,8 @@ static bool ecrLORACommunication = false;
 static BuoyState convertLoraToState(const BuoyStateLora& loraState);
 static BuoyInfo convertLoraInfoToInfo(const BuoyInfoLora& loraInfo);
 
-LoRaCommunication::LoRaCommunication() {
+LoRaCommunication::LoRaCommunication(LoRaBand radioBand) {
+    band = radioBand;
     buoyCount = 0;
     newDataAvailable = false;
     lastRssi = 0;
@@ -67,8 +68,39 @@ LoRaCommunication::LoRaCommunication() {
     }
 }
 
+void LoRaCommunication::setBand(LoRaBand radioBand) {
+    band = radioBand;
+}
+
+uint8_t LoRaCommunication::getChannel() const {
+    return (band == LoRaBand::BAND_433) ? LORA_CHANNEL_433 : LORA_CHANNEL_920;
+}
+
+float LoRaCommunication::getFrequencyMHz() const {
+    // Formules de la datasheet E220 : pas de 1 MHz en 433, 0.2 MHz en 920 (JP)
+    if (band == LoRaBand::BAND_433) {
+        return 410.125f + getChannel() * 1.0f;
+    }
+    return 920.6f + getChannel() * 0.2f;
+}
+
+uint8_t LoRaCommunication::getTxPower() const {
+    // Voir le commentaire détaillé dans LoRaCommunication.h : la table de
+    // puissance du registre dépend de la bande, l'énumération de la
+    // bibliothèque n'est valable que pour le variant JP.
+    return (band == LoRaBand::BAND_433) ? 0b11 : (uint8_t)TX_POWER_13dBm;
+}
+
+uint8_t LoRaCommunication::getAirDataRate() const {
+    // Voir le commentaire détaillé dans LoRaCommunication.h : la structure de
+    // REG0 diffère entre le variant JP et le E220-400T22S, et une mauvaise
+    // valeur casse la parité UART du module.
+    return (band == LoRaBand::BAND_433) ? 0b010 : (uint8_t)BW125K_SF9;
+}
+
 bool LoRaCommunication::begin() {
-    Logger::log("✓ LoRa: Initialisation E220-JP...");
+    Logger::logf("✓ LoRa: Initialisation E220 %s...",
+                 (band == LoRaBand::BAND_433) ? "433 MHz" : "920 MHz (JP)");
     
     Logger::log("⚙️  LoRa mode will be determined by the M0/M1 switch position.");
     Logger::log("");
@@ -141,21 +173,27 @@ bool LoRaCommunication::begin() {
     // Configure LoRa E220-JP parameters
     loraConfig.own_address = 0x0000;  // Adresse joystick / broadcast
     loraConfig.baud_rate = BAUD_9600;
-    loraConfig.air_data_rate = BW125K_SF9;
+    loraConfig.air_data_rate = getAirDataRate();
     loraConfig.subpacket_size = SUBPACKET_200_BYTE;
     loraConfig.rssi_ambient_noise_flag = RSSI_AMBIENT_NOISE_ENABLE;
-    loraConfig.transmitting_power = TX_POWER_13dBm;
-    loraConfig.own_channel = LORA_CHANNEL;
+    loraConfig.transmitting_power = getTxPower();
+    loraConfig.own_channel = getChannel();
     loraConfig.rssi_byte_flag = RSSI_BYTE_ENABLE;
     loraConfig.transmission_method_type = UART_P2P_MODE;
     loraConfig.lbt_flag = LBT_DISABLE;
     loraConfig.wor_cycle = WOR_500MS;
     loraConfig.encryption_key = 0x1234;
     loraConfig.target_address = 0x0000;
-    loraConfig.target_channel = LORA_CHANNEL;
+    loraConfig.target_channel = getChannel();
 
     Logger::log("✓ LoRa: Configuration prepared");
-    Logger::logf("   - Canal: %d (920.6 MHz)", LORA_CHANNEL);
+    Logger::logf("   - Canal: %d (%.3f MHz)", getChannel(), getFrequencyMHz());
+    Logger::logf("   - Air data rate: REG0 0b%s (%s)",
+                 (band == LoRaBand::BAND_433) ? "010" : "10000",
+                 (band == LoRaBand::BAND_433) ? "2.4 kbps, 8N1" : "BW125K_SF9");
+    Logger::logf("   - Puissance: registre 0b%s (%s)",
+                 (band == LoRaBand::BAND_433) ? "11" : "00",
+                 (band == LoRaBand::BAND_433) ? "10 dBm" : "13 dBm");
     Logger::log("");
 
     Logger::log("⏳ LoRa: Sending configuration to module (will succeed only if switch ON)...");
@@ -290,7 +328,7 @@ void LoRaCommunication::listenForResponses()
     
     // Send REQUEST to buoy
     loraConfig.target_address = 0x0000;  // Broadcast mode (comme dans l'exemple M5Stack)
-    loraConfig.target_channel = LORA_CHANNEL;
+    loraConfig.target_channel = getChannel();
     
     // LOG DÉTAILLÉ DU PAQUET REQUEST
     Logger::log("📤 ========== ENVOI REQUEST LoRa ==========");
@@ -652,7 +690,7 @@ static BuoyInfo convertLoraInfoToInfo(const BuoyInfoLora& loraInfo) {
 }
 
 const char* LoRaCommunication::getModeName() const {
-    return "LoRa 920";
+    return (band == LoRaBand::BAND_433) ? "LoRa 433" : "LoRa 920";
 }
 
 void LoRaCommunication::setSelectedBuoy(uint8_t buoyId) {
@@ -706,7 +744,7 @@ bool LoRaCommunication::sendCommandPacket(const CommandPacketLora& packet) {
     
     // Broadcast COMMAND to all buoys at address 0x0000
     loraConfig.target_address = 0x0000;  // Broadcast
-    loraConfig.target_channel = LORA_CHANNEL;
+    loraConfig.target_channel = getChannel();
     
     // Send packet using E220-JP SendFrame()
     int result = lora.SendFrame(loraConfig, (uint8_t*)&packet, sizeof(packet));

@@ -63,14 +63,26 @@ class DisplayManager;
 // Maximum number of manageable buoys
 #define MAX_BUOYS 8
 
-// LoRa E220-JP configuration
-#define LORA_CHANNEL 0x00             // Channel 23 = 920.6 MHz (Japan ISM band)
+// ── Bandes LoRa supportées ───────────────────────────────────────────────────
+// Le même module E220 (et la même bibliothèque) est utilisé dans les deux cas :
+// seule la configuration radio change. La fréquence n'est PAS détectable par
+// logiciel, c'est donc le mode de communication (CommMode::LORA_920 / LORA_433)
+// qui détermine la bande, et le switch M0/M1 du module qui gère sa
+// configuration. Les deux extrémités (joystick et bouée) doivent être réglées
+// sur la même bande, sinon la liaison est silencieusement inexistante.
+enum class LoRaBand {
+    BAND_920,   ///< Module E220-900T22S(JP) : F = 920.6 + canal * 0.2 MHz
+    BAND_433    ///< Module E220-400T22S     : F = 410.125 + canal * 1 MHz
+};
+
+// LoRa E220 configuration
+// IMPORTANT : le canal doit être IDENTIQUE côté joystick et côté bouée.
+#define LORA_CHANNEL_920 0x00       // 920.600 MHz (bande ISM japonaise)
+#define LORA_CHANNEL_433 23         // 433.125 MHz (bande ISM européenne)
 #define LORA_ADDRESS_H 0x00         // High byte of address
 #define LORA_ADDRESS_L 0x07         // Low byte of address (Joystick) - Modifié pour correspondre à la Bouée
 #define LORA_NETID 0x00             // Network ID
 #define LORA_UART_BAUD 9600         // UART baud rate (default)
-#define LORA_AIR_DATA_RATE 0x02     // 2.4kbps (balance between range and speed)
-#define LORA_TX_POWER 22            // 22 dBm (13 dBm actual output for E220-JP)
 
 /**
  * @brief Buoy state structure (received via LoRa)
@@ -207,7 +219,70 @@ struct BuoyInfoLora {
  */
 class LoRaCommunication : public ICommunication {
 public:
-    LoRaCommunication();
+    /**
+     * @brief Constructor
+     * @param band Radio band of the plugged module (default: 920 MHz)
+     *
+     * The band cannot be probed at runtime: it must match the module actually
+     * connected, hence the explicit choice through CommMode in main.cpp.
+     */
+    explicit LoRaCommunication(LoRaBand band = LoRaBand::BAND_920);
+
+    /**
+     * @brief Set the radio band before begin()
+     * @param band Band of the plugged module
+     *
+     * Has no effect once begin() has run: the configuration is pushed to the
+     * module during initialization.
+     */
+    void setBand(LoRaBand band);
+
+    /**
+     * @brief Get the channel number used for the current band
+     */
+    uint8_t getChannel() const;
+
+    /**
+     * @brief Get the center frequency of the current band/channel, in MHz
+     */
+    float getFrequencyMHz() const;
+
+    /**
+     * @brief Get the transmitting power register value for the current band
+     *
+     * ATTENTION : l'énumération TX_POWER_* de la bibliothèque est étiquetée pour
+     * le variant JP. Le champ fait 2 bits dans REG1 et sa table de correspondance
+     * dépend de la bande :
+     *   - E220-900T22S(JP) : 0b00 = 13 dBm (maxi ARIB), 0b01 = 12, 0b10 = 7, 0b11 = 0
+     *   - E220-400T22S     : 0b00 = 22 dBm, 0b01 = 17, 0b10 = 13, 0b11 = 10 dBm
+     * Écrire TX_POWER_13dBm (0b00) sur un module 433 le ferait donc émettre à
+     * 22 dBm. On sélectionne 0b11 = 10 dBm, compatible avec la limite de 10 mW
+     * de la bande ISM 433 européenne.
+     * À confirmer contre la datasheet du module 433 avant émission prolongée.
+     */
+    uint8_t getTxPower() const;
+
+    /**
+     * @brief Get the "air data rate" field (REG0) for the current band
+     *
+     * PIÈGE : le registre REG0 n'a PAS la même structure selon la variante.
+     *   - E220-900T22S(JP) : bits[4:0] encodent le couple SF/BW (firmware JP
+     *     spécifique). BW125K_SF9 = 0b10000 = 1758 bps.
+     *   - E220-400T22S (et toute la famille EBYTE standard) :
+     *       bits[4:3] = parité UART (00 = 8N1)
+     *       bits[2:0] = débit air (0b010 = 2.4 kbps = SF9/BW125, défaut usine)
+     *
+     * Écrire BW125K_SF9 (0b10000) sur un module 433 met donc les bits de parité
+     * à 0b10, soit 8E1, alors que l'ESP32 continue d'émettre en 8N1 : le module
+     * devient sourd dès la fin de la configuration et plus aucune trame ne
+     * passe. On écrit 0b010 en 433, qui donne 8N1 + 2.4 kbps, soit la même
+     * modulation physique SF9/BW125 que le 920.
+     *
+     * Note de récupération : en mode configuration (switch M0/M1 sur ON) le
+     * module force son UART à 9600 8N1, un module déjà mal configuré reste donc
+     * reprogrammable.
+     */
+    uint8_t getAirDataRate() const;
 
     // ICommunication interface implementation
     bool begin() override;
@@ -257,7 +332,8 @@ public:
     void setDisplayManager(DisplayManager* display);
 
 private:
-    LoRa_E220_JP lora;                ///< LoRa E220-JP module instance
+    LoRaBand band;                    ///< Radio band of the plugged module
+    LoRa_E220_JP lora;                ///< LoRa E220 module instance
     LoRaConfigItem_t loraConfig;      ///< LoRa configuration structure
     BuoyInfoLora buoys[MAX_BUOYS];    ///< Array of buoy information
     uint8_t buoyCount;                ///< Number of registered buoys

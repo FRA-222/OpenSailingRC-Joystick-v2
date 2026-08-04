@@ -16,8 +16,8 @@
 #include "CommunicationConfig.h"
 
 // Default mode: ESP-NOW
-// Change this to CommMode::LORA to use LoRa by default
-CommMode CommunicationConfig::currentMode = CommMode::LORA;
+// Change this to CommMode::LORA_920 or CommMode::LORA_433 to use LoRa by default
+CommMode CommunicationConfig::currentMode = CommMode::LORA_920;
 
 CommMode CommunicationConfig::getMode() {
     return currentMode;
@@ -31,8 +31,10 @@ const char* CommunicationConfig::getModeName() {
     switch (currentMode) {
         case CommMode::ESP_NOW:
             return "ESP-NOW";
-        case CommMode::LORA:
-            return "LoRa";
+        case CommMode::LORA_920:
+            return "LoRa 920 MHz";
+        case CommMode::LORA_433:
+            return "LoRa 433 MHz";
         default:
             return "Unknown";
     }
