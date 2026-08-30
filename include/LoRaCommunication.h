@@ -75,6 +75,36 @@ enum class LoRaBand {
     BAND_433    ///< Module E220-400T22S     : F = 410.125 + canal * 1 MHz
 };
 
+/**
+ * @brief Débit air du lien LoRa, indépendant de la bande
+ *
+ * Niveaux ordonnés du plus lent (portée maxi) au plus rapide (portée mini).
+ * Chaque cran divise environ par deux le temps d'antenne et coûte environ 3 dB
+ * de sensibilité.
+ *
+ * IMPORTANT : doit être IDENTIQUE côté bouée (constante LORA_AIR_RATE de
+ * BuoyConfiguration.cpp). Un désaccord ne produit aucune erreur, seulement un
+ * silence total.
+ *
+ * Correspondance approximative (BW125 sauf mention) :
+ *   AIR_2400   SF9    ~1.8 kbps   sensibilité ~ -129 dBm
+ *   AIR_4800   SF8    ~3.1 kbps               ~ -126 dBm
+ *   AIR_9600   SF7    ~5.5 kbps               ~ -124 dBm
+ *   AIR_19200  SF6    ~9.4 kbps               ~ -121 dBm
+ *   AIR_38400  SF5   ~15.6 kbps               ~ -118 dBm
+ *   AIR_62500  SF5/BW500 ~62.5 kbps           ~ -112 dBm
+ *
+ * SF5 est le plancher de la famille LoRa : il n'existe ni SF4 ni SF3.
+ */
+enum class LoRaAirRate {
+    AIR_2400,   ///< Le plus lent, portée maximale (réglage historique)
+    AIR_4800,
+    AIR_9600,   ///< Visé par le protocole passerelle (GATEWAY_DESIGN.md)
+    AIR_19200,
+    AIR_38400,
+    AIR_62500   ///< Le plus rapide, portée minimale
+};
+
 // LoRa E220 configuration
 // IMPORTANT : le canal doit être IDENTIQUE côté joystick et côté bouée.
 #define LORA_CHANNEL_920 0x00       // 920.600 MHz (bande ISM japonaise)
@@ -226,7 +256,34 @@ public:
      * The band cannot be probed at runtime: it must match the module actually
      * connected, hence the explicit choice through CommMode in main.cpp.
      */
-    explicit LoRaCommunication(LoRaBand band = LoRaBand::BAND_920);
+    explicit LoRaCommunication(LoRaBand band = LoRaBand::BAND_920,
+                               LoRaAirRate airRate = LoRaAirRate::AIR_2400);
+
+    /**
+     * @brief Set the air data rate before begin()
+     * @param airRate Débit air, doit être identique côté bouée
+     *
+     * Comme la bande, le débit n'est pas négociable à l'exécution : il est
+     * écrit dans un registre du module, et les deux extrémités doivent être
+     * réglées à l'identique sous peine de silence total.
+     */
+    void setAirRate(LoRaAirRate airRate);
+
+    /**
+     * @brief Libellé du débit air pour les traces ("9.6 kbps (SF7/BW125)")
+     */
+    const char* getAirRateName() const;
+
+    /**
+     * @brief Émet un bilan de liaison sur le port série toutes les 5 s
+     *
+     * Instrument d'essai de portée : appeler à chaque tour de boucle, il
+     * s'auto-cadence. Affiche le débit courant, le nombre de trames reçues,
+     * le RSSI moyen/min/max et la marge estimée par rapport à la sensibilité
+     * du débit sélectionné. Une ligne « AUCUNE trame » signale une liaison
+     * perdue sans ambiguïté.
+     */
+    void logLinkQuality();
 
     /**
      * @brief Set the radio band before begin()
@@ -333,6 +390,20 @@ public:
 
 private:
     LoRaBand band;                    ///< Radio band of the plugged module
+    LoRaAirRate airRate;              ///< Débit air (identique côté bouée)
+
+    // Bilan de liaison périodique (essais de portée) — voir logLinkQuality()
+    uint32_t linkRxCount;             ///< Trames reçues depuis le dernier bilan
+    int32_t  linkRssiSum;             ///< Somme des RSSI, pour la moyenne
+    int16_t  linkRssiMin;             ///< RSSI le plus faible (le pire cas)
+    int16_t  linkRssiMax;             ///< RSSI le plus fort
+    uint32_t lastLinkLogTime;         ///< Horodatage du dernier bilan émis
+
+    /** @brief Accumule un échantillon RSSI pour le bilan périodique */
+    void noteLinkSample(int16_t rssi);
+
+    /** @brief Sensibilité indicative (dBm) du débit courant, pour la marge */
+    int16_t getAirRateSensitivity() const;
     LoRa_E220_JP lora;                ///< LoRa E220 module instance
     LoRaConfigItem_t loraConfig;      ///< LoRa configuration structure
     BuoyInfoLora buoys[MAX_BUOYS];    ///< Array of buoy information

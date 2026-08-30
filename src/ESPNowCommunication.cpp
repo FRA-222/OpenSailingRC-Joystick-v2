@@ -18,6 +18,12 @@
 #include "DisplayManager.h"
 #include <esp_wifi.h>
 
+// Trace de chaque etat ESP-NOW recu. Mettre a 1 pour la mise au point du lien
+// ESP-NOW ; laisser a 0 pendant les essais de portee LoRa (voir plus bas).
+#ifndef DEBUG_ESPNOW_RX
+#define DEBUG_ESPNOW_RX 0
+#endif
+
 // Instance statique pour les callbacks
 ESPNowCommunication* ESPNowCommunication::instance = nullptr;
 
@@ -387,11 +393,17 @@ void ESPNowCommunication::handleReceivedData(const uint8_t* mac, const uint8_t* 
     
     newDataAvailable = true;
     
+    // Trace de chaque etat ESP-NOW recu (~4 lignes/seconde).
+    // Desactivee par defaut : pendant un essai de portee LoRa elle est
+    // surtout TROMPEUSE, puisqu'elle rend compte de l'autre lien radio —
+    // la bouee peut rester "vue" en ESP-NOW alors que le LoRa a decroche.
+#if DEBUG_ESPNOW_RX
     Logger::logf("← État reçu de Bouée #%d (genMode=%d, navMode=%d, GPS=%s)",
                   buoys[index].lastState.buoyId,
                   buoys[index].lastState.generalMode,
                   buoys[index].lastState.navigationMode,
                   buoys[index].lastState.gpsOk ? "OK" : "NO");
+#endif
 }
 
 int8_t ESPNowCommunication::findBuoyIndex(uint8_t buoyId) {

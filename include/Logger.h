@@ -127,6 +127,19 @@ public:
     static void setLcdOutput(bool enabled);
 
     /**
+     * @brief Lit l'etat courant de la sortie serie
+     *
+     * Les drapeaux du Logger sont GLOBAUX : une fonction qui les modifie
+     * reduit au silence tout le firmware, pas seulement ses propres traces.
+     * Ces accesseurs permettent de sauvegarder puis restaurer l'etat autour
+     * d'une section verbeuse (cf. LoggerScope dans LoRaCommunication.cpp).
+     */
+    static bool getSerialOutput();
+
+    /** @brief Lit l'etat courant de la sortie LCD */
+    static bool getLcdOutput();
+
+    /**
      * @brief Définit la taille du texte pour l'affichage LCD
      *
      * @param size Taille du texte (1 = petit, 2 = moyen, 3 = grand)

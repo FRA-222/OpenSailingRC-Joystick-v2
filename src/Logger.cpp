@@ -177,6 +177,14 @@ void Logger::setLcdOutput(bool enabled) {
     }
 }
 
+bool Logger::getSerialOutput() {
+    return enableSerialOutput;
+}
+
+bool Logger::getLcdOutput() {
+    return enableLcdOutput;
+}
+
 /**
  * @brief Définit la taille du texte pour l'affichage LCD
  * 

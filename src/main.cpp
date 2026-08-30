@@ -48,6 +48,27 @@ constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
                                    ? LoRaBand::BAND_433
                                    : LoRaBand::BAND_920;
 
+// Débit air LoRa — DOIT être identique à LORA_AIR_RATE de la bouée
+// (BuoyConfiguration.cpp). Un désaccord ne produit aucune erreur, seulement un
+// silence total : vérifier la trace "Air data rate" au boot des deux côtés.
+//
+// Du plus lent au plus rapide : AIR_2400 / 4800 / 9600 / 19200 / 38400 / 62500.
+// Chaque cran divise ~par 2 le temps d'antenne et coûte ~3 dB de sensibilité.
+// SF5 est le plancher LoRa : il n'existe ni SF4 ni SF3.
+//
+// Essai de portée : commencer par AIR_62500 et descendre jusqu'à ce que la
+// liaison tienne à la distance visée, en relevant le RSSI à chaque palier.
+#define LORA_AIR_RATE LoRaAirRate::AIR_62500
+
+// Trace periodique des valeurs brutes du joystick droit (2 lignes/seconde).
+// Utile pour regler le centrage du stick, mais elle noie les bilans de liaison
+// pendant les essais de portee : laisser a 0 sur le terrain.
+#define DEBUG_JOYSTICK_RAW 0
+
+// Bloc "--- Etat systeme ---" toutes les 2 s (~9 lignes a chaque fois).
+// Utile en mise au point, mais il noie les bilans de liaison sur le terrain.
+#define DEBUG_SYSTEM_STATE 0
+
 // ============================================================================
 // CONFIGURATION - DÉCOUVERTE AUTOMATIQUE DES BOUÉES
 // ============================================================================
@@ -64,7 +85,7 @@ constexpr const char* JOYSTICK_FIRMWARE_VERSION = "2.0.0";
 // ============================================================================
 JoystickManager joystick;
 ESPNowCommunication espNow;
-LoRaCommunication lora(LORA_BAND);
+LoRaCommunication lora(LORA_BAND, LORA_AIR_RATE);
 
 // Instances statiques pour chaque mode
 BuoyStateManager buoyStateESPNow(espNow);
@@ -387,6 +408,9 @@ void loop() {
     // ========================================================================
 
     // --- DEBUG : log périodique des valeurs brutes du joystick droit ---
+    // Activer avec DEBUG_JOYSTICK_RAW (en tete de fichier) pour regler le
+    // centrage du stick ; a laisser desactive pendant les essais de portee.
+#if DEBUG_JOYSTICK_RAW
     static uint32_t lastJsDebugTime = 0;
     if (currentTime - lastJsDebugTime >= 500) {
         lastJsDebugTime = currentTime;
@@ -397,6 +421,7 @@ void loop() {
                      joystick.getAxisCentered(AXIS_RIGHT_X),
                      joystick.getAxisCentered(AXIS_RIGHT_Y));
     }
+#endif
     // -------------------------------------------------------------------
 
     // Détection mouvement joystick DROIT
@@ -487,6 +512,9 @@ void loop() {
     // Traiter les retry de commandes en attente d'ACK
     if (CommunicationConfig::isLoRa(COMM_MODE)) {
         lora.processCommandRetries();
+        // Bilan de liaison toutes les 5 s — instrument d'essai de portee.
+        // S'auto-cadence, sans effet hors LoRa.
+        lora.logLinkQuality();
     } else if (COMM_MODE == CommMode::ESP_NOW) {
         espNow.processCommandRetries();
     }
@@ -513,6 +541,7 @@ void loop() {
     // ========================================================================
     // 5. DEBUG SÉRIE (toutes les 2 secondes)
     // ========================================================================
+#if DEBUG_SYSTEM_STATE
     static uint32_t lastDebug = 0;
     if (currentTime - lastDebug > 2000) {
         lastDebug = currentTime;
@@ -587,4 +616,5 @@ void loop() {
         
         Logger::log("-------------------\n");
     }
+#endif  // DEBUG_SYSTEM_STATE
 }

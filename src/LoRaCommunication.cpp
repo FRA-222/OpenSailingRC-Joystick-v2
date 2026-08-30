@@ -23,16 +23,52 @@
 
 static bool ecrLORACommunication = false;
 
+/**
+ * @brief Garde RAII qui restaure l'etat du Logger a la sortie de portee
+ *
+ * PIEGE CORRIGE : les drapeaux du Logger sont des statiques GLOBALES.
+ * listenForResponses() les positionnait a l'entree sans jamais les restaurer ;
+ * appelee 1000 fois par seconde par loraRxTask (Core 0), elle reduisait au
+ * silence TOUT le firmware — traces ESP-NOW, boucle principale, bilans de
+ * liaison compris. Le systeme tournait normalement, mais sans plus rien
+ * afficher des que la tache RX demarrait.
+ *
+ * Toute fonction qui veut moduler la verbosite doit donc passer par cette
+ * garde, qui restaure l'etat anterieur sur TOUS les chemins de sortie.
+ */
+class LoggerScope {
+public:
+    LoggerScope(bool serial, bool lcd)
+        : prevSerial(Logger::getSerialOutput())
+        , prevLcd(Logger::getLcdOutput()) {
+        Logger::setSerialOutput(serial);
+        Logger::setLcdOutput(lcd);
+    }
+    ~LoggerScope() {
+        Logger::setSerialOutput(prevSerial);
+        Logger::setLcdOutput(prevLcd);
+    }
+private:
+    bool prevSerial;
+    bool prevLcd;
+};
+
 // Forward declarations for conversion functions
 static BuoyState convertLoraToState(const BuoyStateLora& loraState);
 static BuoyInfo convertLoraInfoToInfo(const BuoyInfoLora& loraInfo);
 
-LoRaCommunication::LoRaCommunication(LoRaBand radioBand) {
+LoRaCommunication::LoRaCommunication(LoRaBand radioBand, LoRaAirRate radioAirRate) {
     band = radioBand;
+    airRate = radioAirRate;
     buoyCount = 0;
     newDataAvailable = false;
     lastRssi = 0;
     lastSnr = 0.0f;
+    linkRxCount = 0;
+    linkRssiSum = 0;
+    linkRssiMin = 0;
+    linkRssiMax = -200;
+    lastLinkLogTime = 0;
     
     // Initialize sequential polling state
     currentPollIndex = 0;
@@ -72,6 +108,22 @@ void LoRaCommunication::setBand(LoRaBand radioBand) {
     band = radioBand;
 }
 
+void LoRaCommunication::setAirRate(LoRaAirRate radioAirRate) {
+    airRate = radioAirRate;
+}
+
+const char* LoRaCommunication::getAirRateName() const {
+    switch (airRate) {
+        case LoRaAirRate::AIR_2400:  return "2.4 kbps (SF9/BW125)";
+        case LoRaAirRate::AIR_4800:  return "4.8 kbps (SF8/BW125)";
+        case LoRaAirRate::AIR_9600:  return "9.6 kbps (SF7/BW125)";
+        case LoRaAirRate::AIR_19200: return "19.2 kbps (SF6/BW125)";
+        case LoRaAirRate::AIR_38400: return "38.4 kbps (SF5/BW125)";
+        case LoRaAirRate::AIR_62500: return "62.5 kbps (SF5/BW500)";
+    }
+    return "?";
+}
+
 uint8_t LoRaCommunication::getChannel() const {
     return (band == LoRaBand::BAND_433) ? LORA_CHANNEL_433 : LORA_CHANNEL_920;
 }
@@ -91,11 +143,82 @@ uint8_t LoRaCommunication::getTxPower() const {
     return (band == LoRaBand::BAND_433) ? 0b11 : (uint8_t)TX_POWER_13dBm;
 }
 
+void LoRaCommunication::noteLinkSample(int16_t rssi) {
+    linkRxCount++;
+    linkRssiSum += rssi;
+    if (rssi < linkRssiMin) linkRssiMin = rssi;
+    if (rssi > linkRssiMax) linkRssiMax = rssi;
+}
+
+void LoRaCommunication::logLinkQuality() {
+    // Bilan de liaison periodique — instrument d'essai de portee.
+    // Le RSSI seul ne dit rien : c'est la MARGE qui compte. Le module 433
+    // decroche vers -118 dBm a 15.6 kbps ; un RSSI de -95 laisse donc environ
+    // 23 dB, un RSSI de -112 seulement 6 dB (a la limite).
+    const uint32_t LINK_LOG_INTERVAL = 5000;
+    uint32_t now = millis();
+    if (now - lastLinkLogTime < LINK_LOG_INTERVAL) return;
+    lastLinkLogTime = now;
+
+    if (linkRxCount == 0) {
+        Logger::logf("📶 LIAISON %s | AUCUNE trame recue sur %lu s",
+                     getAirRateName(), LINK_LOG_INTERVAL / 1000);
+    } else {
+        Logger::logf("📶 LIAISON %s | %lu trames | RSSI moy %d | min %d | max %d dBm | marge ~%d dB",
+                     getAirRateName(),
+                     (unsigned long)linkRxCount,
+                     (int)(linkRssiSum / (int32_t)linkRxCount),
+                     (int)linkRssiMin, (int)linkRssiMax,
+                     (int)(getAirRateSensitivity() - linkRssiMin) * -1);
+    }
+    linkRxCount = 0;
+    linkRssiSum = 0;
+    linkRssiMin = 0;
+    linkRssiMax = -200;
+}
+
+int16_t LoRaCommunication::getAirRateSensitivity() const {
+    // Sensibilite indicative du SX1262 par debit, en dBm. Sert uniquement a
+    // afficher une marge approximative pendant les essais de portee.
+    switch (airRate) {
+        case LoRaAirRate::AIR_2400:  return -129;
+        case LoRaAirRate::AIR_4800:  return -126;
+        case LoRaAirRate::AIR_9600:  return -124;
+        case LoRaAirRate::AIR_19200: return -121;
+        case LoRaAirRate::AIR_38400: return -118;
+        case LoRaAirRate::AIR_62500: return -112;
+    }
+    return -129;
+}
+
 uint8_t LoRaCommunication::getAirDataRate() const {
     // Voir le commentaire détaillé dans LoRaCommunication.h : la structure de
     // REG0 diffère entre le variant JP et le E220-400T22S, et une mauvaise
     // valeur casse la parité UART du module.
-    return (band == LoRaBand::BAND_433) ? 0b010 : (uint8_t)BW125K_SF9;
+    if (band == LoRaBand::BAND_433) {
+        // E220-400T22S : bits[4:3] = 00 (8N1) pour toutes les valeurs
+        // ci-dessous, bits[2:0] = débit air. Valeurs nominales de la datasheet
+        // EBYTE ; la correspondance exacte vers SF/BW n'est pas vérifiée.
+        switch (airRate) {
+            case LoRaAirRate::AIR_2400:  return 0b010;  // défaut usine
+            case LoRaAirRate::AIR_4800:  return 0b011;
+            case LoRaAirRate::AIR_9600:  return 0b100;
+            case LoRaAirRate::AIR_19200: return 0b101;
+            case LoRaAirRate::AIR_38400: return 0b110;
+            case LoRaAirRate::AIR_62500: return 0b111;
+        }
+        return 0b010;
+    }
+    // E220-900T22S(JP) : bits[4:0] encodent directement le couple SF/BW.
+    switch (airRate) {
+        case LoRaAirRate::AIR_2400:  return (uint8_t)BW125K_SF9;   // 1758 bps
+        case LoRaAirRate::AIR_4800:  return (uint8_t)BW125K_SF8;   // 3125 bps
+        case LoRaAirRate::AIR_9600:  return (uint8_t)BW125K_SF7;   // 5469 bps
+        case LoRaAirRate::AIR_19200: return (uint8_t)BW125K_SF6;   // 9375 bps
+        case LoRaAirRate::AIR_38400: return (uint8_t)BW125K_SF5;   // 15625 bps
+        case LoRaAirRate::AIR_62500: return (uint8_t)BW500K_SF5;   // 62500 bps
+    }
+    return (uint8_t)BW125K_SF9;
 }
 
 bool LoRaCommunication::begin() {
@@ -188,9 +311,16 @@ bool LoRaCommunication::begin() {
 
     Logger::log("✓ LoRa: Configuration prepared");
     Logger::logf("   - Canal: %d (%.3f MHz)", getChannel(), getFrequencyMHz());
-    Logger::logf("   - Air data rate: REG0 0b%s (%s)",
-                 (band == LoRaBand::BAND_433) ? "010" : "10000",
-                 (band == LoRaBand::BAND_433) ? "2.4 kbps, 8N1" : "BW125K_SF9");
+    // String(v, BIN) supprime les zeros de tete : 0b010 s'afficherait "10", ce
+    // qui se lit comme bits[4:3]=10, c'est-a-dire 8E1 — exactement le piege de
+    // parite que cette trace sert a detecter. On pad sur 5 bits, largeur reelle
+    // du champ REG0[4:0].
+    String rateBits = String(getAirDataRate(), BIN);
+    while (rateBits.length() < 5) rateBits = "0" + rateBits;
+    Logger::logf("   - Air data rate: %s - REG0 0b%s%s",
+                 getAirRateName(),
+                 rateBits.c_str(),
+                 (band == LoRaBand::BAND_433) ? " (8N1)" : "");
     Logger::logf("   - Puissance: registre 0b%s (%s)",
                  (band == LoRaBand::BAND_433) ? "11" : "00",
                  (band == LoRaBand::BAND_433) ? "10 dBm" : "13 dBm");
@@ -241,17 +371,9 @@ void LoRaCommunication::update() {
 
 void LoRaCommunication::listenForResponses()
 {
-
-    if (ecrLORACommunication)
-    {
-        Logger::setLcdOutput(false);
-        Logger::setSerialOutput(true);
-    }
-    else
-    {
-        Logger::setLcdOutput(false);
-        Logger::setSerialOutput(false);
-    }
+    // Verbosite locale, restauree a la sortie de portee (voir LoggerScope).
+    // Sans cette garde, la fonction rendait tout le firmware muet.
+    LoggerScope logScope(ecrLORACommunication, false);
 
     // Prendre le mutex (attente max 10ms pour éviter blocage)
     if (xSemaphoreTake(loraMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
@@ -270,6 +392,7 @@ void LoRaCommunication::listenForResponses()
             // Frame reçue
             lastRssi = recvFrame.rssi;
             lastSnr = 0.0f;
+            noteLinkSample(lastRssi);
 
             // Vérifier le type de message
             if (recvFrame.recv_data_len >= sizeof(LoRaMessageType))
@@ -428,16 +551,8 @@ void LoRaCommunication::listenForResponses()
 
 bool LoRaCommunication::sendCommand(uint8_t buoyId, const Command& cmd) {
 
-    if (ecrLORACommunication)
-    {
-        Logger::setLcdOutput(false);
-        Logger::setSerialOutput(true);
-    }
-    else
-    {
-        Logger::setLcdOutput(false);
-        Logger::setSerialOutput(false);
-    }
+    // Verbosite locale, restauree a la sortie de portee (voir LoggerScope).
+    LoggerScope logScope(ecrLORACommunication, false);
 
     if (buoyId >= MAX_BUOYS) {
         Logger::logf("✗ LoRa: ID bouée invalide %d", buoyId);
@@ -612,16 +727,8 @@ int8_t LoRaCommunication::addOrUpdateBuoy(uint8_t buoyId) {
 
 void LoRaCommunication::processReceivedMessage(const uint8_t* data, size_t len) {
 
-    if (ecrLORACommunication)
-    {
-        Logger::setLcdOutput(false);
-        Logger::setSerialOutput(true);
-    }
-    else
-    {
-        Logger::setLcdOutput(false);
-        Logger::setSerialOutput(false);
-    }
+    // Verbosite locale, restauree a la sortie de portee (voir LoggerScope).
+    LoggerScope logScope(ecrLORACommunication, false);
     
     // Check if this is a buoy state message
     if (len == sizeof(BuoyStateLora)) {
