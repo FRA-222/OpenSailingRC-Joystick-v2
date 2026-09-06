@@ -63,6 +63,49 @@ class DisplayManager;
 // Maximum number of manageable buoys
 #define MAX_BUOYS 8
 
+// ── Instrument de bilan de liaison (essais de portée) ────────────────────────
+// Valeur sentinelle : le RSSI de bruit ambiant n'a pas pu être lu.
+#define LINK_NOISE_UNKNOWN (-32768)
+
+// Relire le bruit ambiant à chaque bilan, et pas seulement au démarrage.
+//
+// ⚠️ Laissé à 0 par défaut, volontairement. La lecture se fait par la commande
+// C0 C1 C2 C3 sur le MÊME UART que les trames reçues : si une trame arrive
+// pendant la fenêtre de lecture, ses premiers octets sont consommés par le
+// parseur de la réponse et la trame est perdue. Une trame perdue par le
+// dispositif de mesure fausse précisément la grandeur que l'on mesure — le
+// taux de réception. Le bruit ambiant d'un site ne dérivant pas en quelques
+// minutes, la lecture unique de begin() suffit à un essai de portée.
+//
+// À passer à 1 seulement pour instrumenter une source d'interférence variable,
+// en sachant que le taux de réception affiché devient alors pessimiste.
+#define LINK_POLL_NOISE 0
+
+// ── Diagnostic de bruit (§ scanChannelNoise / logNoiseProfile) ───────────────
+// Passer à 1, flasher, lire la trace au démarrage, repasser à 0.
+//
+// Le diagnostic tourne AVANT tout trafic et monopolise l'UART du module : il
+// n'a pas sa place dans un firmware d'exploitation. Le déclencher au démarrage
+// plutôt que par un bouton est délibéré — on veut relever le bruit dans des
+// conditions qu'on fait varier (USB branché/débranché, écran allumé/éteint,
+// WiFi actif/coupé), et un redémarrage est justement la façon la plus simple
+// de repartir d'un état propre entre deux relevés.
+#define LORA_NOISE_DIAG 0
+
+// Plage de canaux balayée par le scan. En 433, f = 410,125 + canal (MHz).
+//
+// ⚠️ ÉCOUTER n'est pas ÉMETTRE. Le balayage large est légitime en réception —
+// il sert à voir la FORME du profil de bruit, ce qui distingue une pollution
+// propre (profil plat) d'une interférence externe (profil bosselé). Mais la
+// bande ISM 433 utilisable en émission ne va que de 433,05 à 434,79 MHz, soit
+// les canaux 23 et 24 UNIQUEMENT. Voir logNoiseProfile() et GATEWAY_DESIGN §5.3.
+#define LORA_SCAN_CH_MIN 0
+#define LORA_SCAN_CH_MAX 83
+
+// Canaux réellement exploitables en émission dans la bande ISM 433 MHz.
+#define LORA_ISM433_CH_MIN 23   // 433,125 MHz — canal en service
+#define LORA_ISM433_CH_MAX 24   // 434,125 MHz — le seul canal de repli
+
 // ── Bandes LoRa supportées ───────────────────────────────────────────────────
 // Le même module E220 (et la même bibliothèque) est utilisé dans les deux cas :
 // seule la configuration radio change. La fréquence n'est PAS détectable par
@@ -283,7 +326,32 @@ public:
      * du débit sélectionné. Une ligne « AUCUNE trame » signale une liaison
      * perdue sans ambiguïté.
      */
-    void logLinkQuality();
+    /**
+     * @brief Bilan de liaison périodique (toutes les 5 s), pour essais de portée
+     *
+     * @param activeBuoyId Bouée à laquelle les statistiques se rapportent.
+     *        **Un changement de valeur clôture le palier en cours et remet les
+     *        compteurs à zéro** — sans quoi les statistiques de deux bouées se
+     *        mélangeraient dans le même taux de réception, ce qui les rendrait
+     *        toutes deux ininterprétables. Passer `buoyState->getSelectedBuoyId()`.
+     */
+    void logLinkQuality(uint8_t activeBuoyId);
+
+    /**
+     * @brief Clôture le palier en cours et remet les compteurs à zéro
+     *
+     * Appelée automatiquement par logLinkQuality() sur changement de bouée.
+     * Publique pour permettre de marquer aussi un changement de **configuration**
+     * — palier de distance, antenne, débit air — dont le firmware n'a pas
+     * connaissance.
+     *
+     * @param buoyId Bouée à laquelle se rapporte le NOUVEAU palier
+     */
+    void resetLinkStats(uint8_t buoyId);
+
+    /** @brief Trace le cumul du palier qui s'achève (fenêtres, taux, pire série) */
+    void logLinkSummary();
+
 
     /**
      * @brief Set the radio band before begin()
@@ -393,17 +461,111 @@ private:
     LoRaAirRate airRate;              ///< Débit air (identique côté bouée)
 
     // Bilan de liaison périodique (essais de portée) — voir logLinkQuality()
+    //
+    // ⚠️ Le E220 n'expose PAS le SNR. Le module encapsule le SX1262 et n'ajoute
+    // qu'un octet de RSSI paquet ; ni son jeu de registres ni sa trame de
+    // réception ne portent le SNR. Or c'est le SNR qui porte la marge réelle
+    // dès que le signal passe sous le plancher de bruit — régime dans lequel
+    // LoRa démodule encore, et où le RSSI paquet plafonne. La campagne de
+    // portée du 30/08/2026 l'a montré : RSSI plat à ±2 dB de 50 m à 130 m,
+    // alors que les trames se perdaient (GATEWAY_DESIGN.md § A.8).
+    //
+    // Ce que l'on mesure à la place, par ordre de valeur décroissante :
+    //   1. le TAUX DE RÉCEPTION (fenêtres non vides / fenêtres) — seul
+    //      indicateur qui ait suivi la distance pendant la campagne ;
+    //   2. la SÉRIE DE FENÊTRES VIDES, qui décrit la frange intermittente ;
+    //   3. le RAPPORT SIGNAL/BRUIT approché = RSSI paquet − RSSI de bruit
+    //      ambiant, ce dernier étant lu une fois au démarrage (§ readAmbient…).
     uint32_t linkRxCount;             ///< Trames reçues depuis le dernier bilan
     int32_t  linkRssiSum;             ///< Somme des RSSI, pour la moyenne
     int16_t  linkRssiMin;             ///< RSSI le plus faible (le pire cas)
     int16_t  linkRssiMax;             ///< RSSI le plus fort
     uint32_t lastLinkLogTime;         ///< Horodatage du dernier bilan émis
+    uint32_t linkWindows;             ///< Fenêtres de bilan écoulées
+    uint32_t linkEmptyWindows;        ///< Fenêtres sans aucune trame
+    uint16_t linkEmptyStreak;         ///< Fenêtres vides consécutives, en cours
+    uint16_t linkEmptyStreakMax;      ///< Pire série de fenêtres vides
+    int16_t  linkNoiseFloor;          ///< RSSI de bruit ambiant (dBm), LINK_NOISE_UNKNOWN si non lu
+    uint8_t  linkStatsBuoyId;         ///< Bouée du palier en cours (0xFF = aucun palier ouvert)
+
+    /**
+     * @brief La configuration a-t-elle été réellement écrite dans le module ?
+     *
+     * `InitLoRaSetting()` ne réussit qu'en mode configuration (switch M0/M1 sur
+     * ON). Sur un démarrage normal elle échoue, et le module **conserve la
+     * configuration qu'il avait en mémoire** — qui peut différer de celle que
+     * le firmware vient d'afficher. Un débit air discordant coupe alors la
+     * liaison sans le moindre message d'erreur (GATEWAY_DESIGN.md §5.1).
+     *
+     * Le drapeau ne sert qu'au constat de démarrage : marquer chaque ligne de
+     * bilan aurait ajouté une réserve permanente — les campagnes tournant
+     * switch OFF — donc illisible à force d'être toujours présente.
+     */
+    bool configApplied = false;
 
     /** @brief Accumule un échantillon RSSI pour le bilan périodique */
     void noteLinkSample(int16_t rssi);
 
-    /** @brief Sensibilité indicative (dBm) du débit courant, pour la marge */
-    int16_t getAirRateSensitivity() const;
+    /**
+     * @brief Lit le RSSI de bruit ambiant du module (commande C0 C1 C2 C3)
+     *
+     * Seule grandeur du E220 qui approche le SNR : le bruit ambiant permet de
+     * calculer un rapport signal/bruit ≈ RSSI_paquet − RSSI_bruit, là où la
+     * « marge » d'une version précédente comparait le RSSI à la sensibilité de
+     * datasheet — comparaison sans objet, puisque le RSSI plafonne au bruit.
+     *
+     * ⚠️ Consomme la réponse sur le MÊME UART que les trames de données. À
+     * n'appeler que lorsque le lien est silencieux : cette fonction est appelée
+     * une fois en fin de begin(), avant tout trafic. Voir LINK_POLL_NOISE.
+     *
+     * ⚠️⚠️ **NE JAMAIS APPELER EN MODE CONFIGURATION** (M0=M1=1). En mode
+     * normal, `C0 C1 C2 C3` est la commande documentée de lecture du RSSI. En
+     * mode configuration, `C0` est au contraire le code d'**écriture de
+     * registres**, et les trois octets suivants sont lus comme adresse,
+     * longueur et donnée : on enverrait une écriture malformée au module.
+     * L'appelant doit garantir le mode normal — voir la garde dans begin().
+     *
+     * @return RSSI de bruit en dBm, ou LINK_NOISE_UNKNOWN si la lecture échoue
+     */
+    int16_t readAmbientNoiseRssi();
+
+    /**
+     * @brief Profil de bruit sur le canal courant — toujours disponible
+     *
+     * Lit le bruit ambiant N fois et affiche min / médiane / max / dispersion.
+     * C'est le relevé qui répond à la première question du diagnostic : **la
+     * valeur bouge-t-elle ?** Un vrai plancher de bruit varie de quelques dB
+     * d'un échantillon à l'autre ; un plancher de *lecture* du module reste
+     * figé, et il n'y a alors aucun décibel à récupérer.
+     *
+     * Ne nécessite aucun changement de canal, donc fonctionne switch M0/M1 en
+     * position normale — contrairement à scanChannelNoise().
+     */
+    void logNoiseProfile(uint32_t sampleCount);
+
+    /**
+     * @brief Balayage du bruit ambiant canal par canal
+     *
+     * Le diagnostic qui commande tout le reste : la **forme** du profil dit
+     * d'où vient le bruit.
+     *   - profil plat sur toute la plage → bruit large bande, donc pollution
+     *     propre à la carte (découpage, horloges, écran, câble USB) ; changer
+     *     de canal ne servirait à rien ;
+     *   - profil bosselé, avec des canaux nettement plus calmes → interférence
+     *     externe.
+     *
+     * ⚠️ Exige LORA_USE_SOFTWARE_M0M1 : changer de canal impose de passer le
+     * module en mode configuration (M0=M1=1) puis de revenir en mode normal
+     * (M0=M1=0) pour lire le bruit. Avec un switch mécanique, la séquence n'est
+     * pas automatisable ; la fonction le signale et se replie sur
+     * logNoiseProfile().
+     */
+    void scanChannelNoise(uint8_t chFrom, uint8_t chTo);
+
+#ifdef LORA_USE_SOFTWARE_M0M1
+    /** @brief Bascule le module sur un canal, le temps d'un relevé de bruit */
+    bool applyScanChannel(uint8_t ch);
+#endif
     LoRa_E220_JP lora;                ///< LoRa E220 module instance
     LoRaConfigItem_t loraConfig;      ///< LoRa configuration structure
     BuoyInfoLora buoys[MAX_BUOYS];    ///< Array of buoy information

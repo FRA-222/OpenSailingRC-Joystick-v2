@@ -43,6 +43,27 @@
 // configure via son switch M0/M1 (ON = configuration, OFF = normal).
 #define COMM_MODE CommMode::LORA_433
 
+// ── Écoute passive ESP-NOW en mode LoRa ──────────────────────────────────────
+// 1 = comportement nominal : en mode LoRa, ESP-NOW est aussi initialisé pour
+//     recevoir les broadcasts d'état des bouées, plus rapides que le LoRa.
+// 0 = radio 2,4 GHz coupée. Le joystick ne reçoit plus que le LoRa.
+//
+// ⚠️ Ce n'est PAS un simple réglage de confort : c'est l'instrument d'un essai
+// de portée. Les deux radios cohabitent sur la même carte, et les bursts WiFi
+// tirent 250-350 mA en quelques centaines de µs — ce qui remonte le plancher de
+// bruit du récepteur 433 colocalisé (5 à 15 dB typiques) et peut détruire les
+// trames LoRa qui tombent au mauvais moment.
+//
+// La campagne de portée du 30/08/2026 a été faite avec ESP-NOW ACTIF des deux
+// côtés, et le motif en salves des pertes est compatible avec un battement
+// entre le broadcast ESP-NOW de la bouée (1 s) et le heartbeat LoRa (3 s).
+// Voir GATEWAY_DESIGN.md §5.3, « ESP-NOW et LoRa sur la même carte ».
+//
+// L'essai : mettre 0 ici, couper aussi le broadcast periodique cote bouee,
+// refaire le palier 110 m et comparer le TAUX DE RECEPTION affiche par le
+// bilan de liaison (pas le RSSI, qui ne bougera pas).
+#define JOYSTICK_ESPNOW_PASSIVE 0
+
 // Bande radio déduite du mode ci-dessus (utilisée par l'instance LoRa)
 constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
                                    ? LoRaBand::BAND_433
@@ -58,7 +79,7 @@ constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
 //
 // Essai de portée : commencer par AIR_62500 et descendre jusqu'à ce que la
 // liaison tienne à la distance visée, en relevant le RSSI à chaque palier.
-#define LORA_AIR_RATE LoRaAirRate::AIR_62500
+#define LORA_AIR_RATE LoRaAirRate::AIR_9600
 
 // Trace periodique des valeurs brutes du joystick droit (2 lignes/seconde).
 // Utile pour regler le centrage du stick, mais elle noie les bilans de liaison
@@ -78,7 +99,7 @@ constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
 // ============================================================================
 // VERSION FIRMWARE
 // ============================================================================
-constexpr const char* JOYSTICK_FIRMWARE_VERSION = "2.0.0";
+constexpr const char* JOYSTICK_FIRMWARE_VERSION = "2.1.6";
 
 // ============================================================================
 // INSTANCES DES MANAGERS
@@ -212,6 +233,7 @@ void setup() {
                          lora.getChannel(), lora.getFrequencyMHz());
         }
         
+#if JOYSTICK_ESPNOW_PASSIVE
         // En mode LoRa, initialiser aussi ESP-NOW en écoute passive
         // pour recevoir les broadcasts de statut des bouées (plus rapide que LoRa)
         Logger::log("2b. Initialisation ESP-NOW (écoute passive)...");
@@ -220,6 +242,18 @@ void setup() {
         } else {
             Logger::log("   -> ESP-NOW passif: OK (réception broadcasts bouées)");
         }
+#else
+        // Radio 2,4 GHz coupée — voir JOYSTICK_ESPNOW_PASSIVE en tête de fichier.
+        // WiFi.mode(WIFI_OFF) est explicite plutôt qu'implicite : ne pas appeler
+        // espNow.begin() suffirait à ne pas allumer la radio, mais le dire
+        // fermement garantit l'etat mesure, et c'est ce qui compte pour un essai.
+        WiFi.mode(WIFI_OFF);
+        Logger::log("2b. ESP-NOW passif: DESACTIVE (JOYSTICK_ESPNOW_PASSIVE = 0)");
+        Logger::log("   -> Radio 2.4 GHz coupee. Essai de portee : comparer le TAUX");
+        Logger::log("      DE RECEPTION du bilan de liaison avec et sans (§5.3).");
+        Logger::log("   -> Les broadcasts d'etat ESP-NOW des bouees ne sont plus recus ;");
+        Logger::log("      seul le LoRa alimente l'affichage.");
+#endif
     }
     
     // 3. Préparation pour découverte automatique des bouées
@@ -514,7 +548,9 @@ void loop() {
         lora.processCommandRetries();
         // Bilan de liaison toutes les 5 s — instrument d'essai de portee.
         // S'auto-cadence, sans effet hors LoRa.
-        lora.logLinkQuality();
+        // La bouee active est passee au bilan : un changement cloture le palier
+        // en cours et remet les compteurs a zero (campagne multi-bouees).
+        lora.logLinkQuality(buoyState->getSelectedBuoyId());
     } else if (COMM_MODE == CommMode::ESP_NOW) {
         espNow.processCommandRetries();
     }
@@ -576,10 +612,14 @@ void loop() {
         }
         
         // En mode LoRa, vérifier aussi les données ESP-NOW (plus récentes ?)
+        // Sans écoute passive, cette source n'existe pas : ne pas l'interroger,
+        // sinon l'affichage retomberait sur des données jamais rafraîchies.
         BuoyInfo* espNowInfo = nullptr;
+#if JOYSTICK_ESPNOW_PASSIVE
         if (CommunicationConfig::isLoRa(COMM_MODE)) {
             espNowInfo = espNow.getBuoyInfo(selectedId);
         }
+#endif
         
         // Choisir la source la plus récente
         if (espNowInfo != nullptr && espNowInfo->registered && 

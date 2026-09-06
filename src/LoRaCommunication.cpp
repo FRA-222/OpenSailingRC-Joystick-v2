@@ -36,19 +36,62 @@ static bool ecrLORACommunication = false;
  * Toute fonction qui veut moduler la verbosite doit donc passer par cette
  * garde, qui restaure l'etat anterieur sur TOUS les chemins de sortie.
  */
+/**
+ * @brief Verrou des portees de verbosite — voir le piege ci-dessous
+ *
+ * Cree a la premiere utilisation (static local : initialisation thread-safe
+ * garantie par le compilateur).
+ */
+static SemaphoreHandle_t loggerScopeMutex() {
+    static SemaphoreHandle_t m = xSemaphoreCreateMutex();
+    return m;
+}
+
 class LoggerScope {
 public:
-    LoggerScope(bool serial, bool lcd)
-        : prevSerial(Logger::getSerialOutput())
-        , prevLcd(Logger::getLcdOutput()) {
-        Logger::setSerialOutput(serial);
-        Logger::setLcdOutput(lcd);
+    /**
+     * ⚠️ PIEGE CORRIGE LE 06/09/2026 — le firmware devenait definitivement muet.
+     *
+     * Cette classe sauvegarde puis restaure un etat GLOBAL du Logger, et elle
+     * est utilisee depuis DEUX taches : listenForResponses() tourne dans
+     * loraRxTask sur le Core 0, sendCommand() dans la boucle principale sur le
+     * Core 1. Sans exclusion mutuelle, les paires sauvegarde/restauration
+     * s'entrelacent :
+     *
+     *   1. boucle principale : sauve « serie=ACTIVE », met serie=INACTIVE
+     *   2. tache RX          : sauve « serie=INACTIVE » (!), met serie=INACTIVE
+     *   3. boucle principale : restaure serie=ACTIVE
+     *   4. tache RX          : restaure serie=INACTIVE  ← plus rien ne s'affiche
+     *
+     * L'etat final depend de l'ordre d'entrelacement, donc le symptome est
+     * intermittent : le joystick cesse de logger sans rien d'autre d'anormal,
+     * et le systeme continue de fonctionner. Le mutex garantit qu'une seule
+     * portee est active a la fois, donc que les paires s'imbriquent.
+     *
+     * Ordre de verrouillage : LoggerScope AVANT loraMutex, partout, sans quoi
+     * les deux taches se bloqueraient mutuellement.
+     *
+     * En cas de contention (5 ms), on renonce simplement a modifier la
+     * verbosite : mieux vaut une trace trop bavarde qu'un etat corrompu.
+     */
+    LoggerScope(bool serial, bool lcd) : owned(false), prevSerial(false), prevLcd(false) {
+        if (xSemaphoreTake(loggerScopeMutex(), pdMS_TO_TICKS(5)) == pdTRUE) {
+            owned = true;
+            prevSerial = Logger::getSerialOutput();
+            prevLcd = Logger::getLcdOutput();
+            Logger::setSerialOutput(serial);
+            Logger::setLcdOutput(lcd);
+        }
     }
     ~LoggerScope() {
-        Logger::setSerialOutput(prevSerial);
-        Logger::setLcdOutput(prevLcd);
+        if (owned) {
+            Logger::setSerialOutput(prevSerial);
+            Logger::setLcdOutput(prevLcd);
+            xSemaphoreGive(loggerScopeMutex());
+        }
     }
 private:
+    bool owned;
     bool prevSerial;
     bool prevLcd;
 };
@@ -69,6 +112,12 @@ LoRaCommunication::LoRaCommunication(LoRaBand radioBand, LoRaAirRate radioAirRat
     linkRssiMin = 0;
     linkRssiMax = -200;
     lastLinkLogTime = 0;
+    linkWindows = 0;
+    linkEmptyWindows = 0;
+    linkEmptyStreak = 0;
+    linkEmptyStreakMax = 0;
+    linkNoiseFloor = LINK_NOISE_UNKNOWN;
+    linkStatsBuoyId = 0xFF;   // aucun palier ouvert
     
     // Initialize sequential polling state
     currentPollIndex = 0;
@@ -150,45 +199,354 @@ void LoRaCommunication::noteLinkSample(int16_t rssi) {
     if (rssi > linkRssiMax) linkRssiMax = rssi;
 }
 
-void LoRaCommunication::logLinkQuality() {
-    // Bilan de liaison periodique — instrument d'essai de portee.
-    // Le RSSI seul ne dit rien : c'est la MARGE qui compte. Le module 433
-    // decroche vers -118 dBm a 15.6 kbps ; un RSSI de -95 laisse donc environ
-    // 23 dB, un RSSI de -112 seulement 6 dB (a la limite).
-    const uint32_t LINK_LOG_INTERVAL = 5000;
-    uint32_t now = millis();
-    if (now - lastLinkLogTime < LINK_LOG_INTERVAL) return;
-    lastLinkLogTime = now;
+int16_t LoRaCommunication::readAmbientNoiseRssi() {
+    // Commande de lecture du RSSI du E220 : C0 C1 C2 C3. Le module repond
+    // C1 <adr> <len> <bruit_ambiant> <rssi_derniere_trame>. Les deux octets de
+    // RSSI sont en complement : valeur_dBm = octet - 256.
+    //
+    // rssi_ambient_noise_flag doit etre a RSSI_AMBIENT_NOISE_ENABLE dans la
+    // config (c'est le cas, voir begin()) sans quoi le module ne repond pas.
+    //
+    // ⚠️ Cette commande n'est pas confirmee sur la datasheet du 400T22S — c'est
+    // le meme registre que le piege documente dans LORA_DUAL_BAND_PLAN.md. La
+    // reponse brute est donc tracee au premier appel : si le format differe,
+    // il est lisible dans le log sans avoir a instrumenter davantage. En cas
+    // d'echec la fonction renvoie LINK_NOISE_UNKNOWN et l'instrument continue
+    // de fonctionner sans le rapport signal/bruit — c'est un bonus, pas un
+    // prerequis.
+    while (Serial2.available()) Serial2.read();  // partir d'un tampon propre
 
-    if (linkRxCount == 0) {
-        Logger::logf("📶 LIAISON %s | AUCUNE trame recue sur %lu s",
-                     getAirRateName(), LINK_LOG_INTERVAL / 1000);
-    } else {
-        Logger::logf("📶 LIAISON %s | %lu trames | RSSI moy %d | min %d | max %d dBm | marge ~%d dB",
-                     getAirRateName(),
-                     (unsigned long)linkRxCount,
-                     (int)(linkRssiSum / (int32_t)linkRxCount),
-                     (int)linkRssiMin, (int)linkRssiMax,
-                     (int)(getAirRateSensitivity() - linkRssiMin) * -1);
+    Serial2.write(0xC0);
+    Serial2.write(0xC1);
+    Serial2.write(0xC2);
+    Serial2.write(0xC3);
+    Serial2.flush();
+
+    uint8_t resp[8];
+    uint8_t len = 0;
+    uint32_t deadline = millis() + 150;
+    while (millis() < deadline && len < sizeof(resp)) {
+        if (Serial2.available()) resp[len++] = (uint8_t)Serial2.read();
     }
+
+    if (len == 0) {
+        Logger::log("   ⚠️  Bruit ambiant : aucune reponse du module (commande C0C1C2C3)");
+        return LINK_NOISE_UNKNOWN;
+    }
+
+    String hex = "";
+    for (uint8_t i = 0; i < len; i++) {
+        if (resp[i] < 0x10) hex += "0";
+        hex += String(resp[i], HEX);
+        hex += " ";
+    }
+    Logger::logf("   📻 Bruit ambiant, reponse brute (%u o) : %s", len, hex.c_str());
+
+    // L'avant-dernier octet utile est le bruit ambiant. On exige l'en-tete C1
+    // pour ne pas interpreter une trame de donnees comme une reponse.
+    if (resp[0] != 0xC1 || len < 4) {
+        Logger::log("   ⚠️  Bruit ambiant : format de reponse inattendu, valeur ignoree");
+        return LINK_NOISE_UNKNOWN;
+    }
+
+    int16_t noise = (int16_t)resp[len - 2] - 256;
+    if (noise > -20 || noise < -140) {
+        Logger::logf("   ⚠️  Bruit ambiant hors plage (%d dBm), valeur ignoree", (int)noise);
+        return LINK_NOISE_UNKNOWN;
+    }
+    return noise;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diagnostic de bruit — voir LoRaCommunication.h et GATEWAY_DESIGN.md §5.3
+// ─────────────────────────────────────────────────────────────────────────────
+
+void LoRaCommunication::logNoiseProfile(uint32_t sampleCount) {
+    // Repond a la PREMIERE question du diagnostic : la valeur bouge-t-elle ?
+    // Un plancher de bruit reel varie de quelques dB d'un echantillon a l'autre.
+    // Un plancher de LECTURE du module reste fige — et il n'y a alors aucun
+    // decibel a recuperer, quel que soit le travail fait sur le materiel.
+    const uint32_t MAX_SAMPLES = 32;
+    if (sampleCount > MAX_SAMPLES) sampleCount = MAX_SAMPLES;
+    if (sampleCount == 0) return;
+
+    int16_t v[MAX_SAMPLES];
+    uint32_t n = 0;
+
+    Logger::logf("🔬 Profil de bruit — canal %d (%.3f MHz), %lu echantillons",
+                 getChannel(), getFrequencyMHz(), (unsigned long)sampleCount);
+
+    uint32_t echecs = 0;
+    for (uint32_t i = 0; i < sampleCount; i++) {
+        int16_t r = readAmbientNoiseRssi();
+        if (r != LINK_NOISE_UNKNOWN) {
+            v[n++] = r;
+            echecs = 0;
+        } else if (++echecs >= 3) {
+            // Inutile d'insister : si le module n'a pas repondu trois fois de
+            // suite, il ne repondra pas davantage a la vingtieme. Repeter
+            // l'echec ne fait que noyer le log de l'essai.
+            Logger::logf("   ↳ abandon apres %lu echecs consecutifs", (unsigned long)echecs);
+            break;
+        }
+        delay(50);
+    }
+
+    if (n == 0) {
+        Logger::log("   ⚠️  Aucun echantillon valide — le module ne repond pas a C0C1C2C3.");
+        Logger::log("   CAUSE STRUCTURELLE, verifiee le 05/09/2026 : le module est en");
+        Logger::log("   UART_P2P_MODE, ou tout octet entrant par l'UART est EMIS PAR RADIO");
+        Logger::log("   au lieu d'etre interprete comme une commande. Il n'existe donc aucun");
+        Logger::log("   chemin de lecture du bruit ambiant en fonctionnement normal, et le");
+        Logger::log("   bit RSSI_AMBIENT_NOISE_ENABLE n'y change rien (il a ete ecrit).");
+        Logger::log("   ➜ Ne pas reessayer. Le plancher de bruit s'estime autrement : voir");
+        Logger::log("     GATEWAY_DESIGN.md §5.3, par le PLATEAU du RSSI paquet.");
+        return;
+    }
+
+    // Tri par insertion : n <= 32, inutile de faire mieux.
+    for (uint32_t i = 1; i < n; i++) {
+        int16_t k = v[i];
+        int32_t j = (int32_t)i - 1;
+        while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; }
+        v[j + 1] = k;
+    }
+
+    int16_t vmin = v[0], vmax = v[n - 1], vmed = v[n / 2];
+    int16_t spread = vmax - vmin;
+
+    Logger::logf("   min %d | mediane %d | max %d dBm | dispersion %d dB (%lu/%lu valides)",
+                 (int)vmin, (int)vmed, (int)vmax, (int)spread,
+                 (unsigned long)n, (unsigned long)sampleCount);
+
+    if (spread <= 1) {
+        Logger::log("   ➜ Valeur FIGEE : c'est probablement un plancher de LECTURE du E220,");
+        Logger::log("     pas un plancher de bruit. Aucun dB a recuperer de ce cote — ne pas");
+        Logger::log("     engager de travail materiel sur cette base.");
+    } else {
+        Logger::logf("   ➜ Valeur VARIABLE (%d dB) : le relevé mesure bien du bruit reel.", (int)spread);
+        if (vmed > -100) {
+            Logger::logf("     Bruit thermique attendu en 125 kHz : ~-117 dBm. Ici %+d dB au-dessus.",
+                         (int)(vmed + 117));
+            Logger::log("     Refaire ce releve en changeant UNE condition a la fois, dans cet ordre :");
+            Logger::log("       1. USB debranche, sur batterie   (suspect n.1 : bruit de mode commun)");
+            Logger::log("       2. ESP-NOW coupe des DEUX cotes  (suspect n.2 : la bouee emet a 1 s,");
+            Logger::log("          a quelques cm de son propre recepteur LoRa — GATEWAY_DESIGN §5.3)");
+            Logger::log("       3. retroeclairage et ecran eteints");
+            Logger::log("       4. antenne deportee de 20-30 cm du boitier");
+        }
+    }
+}
+
+void LoRaCommunication::scanChannelNoise(uint8_t chFrom, uint8_t chTo) {
+#ifndef LORA_USE_SOFTWARE_M0M1
+    (void)chFrom; (void)chTo;
+    Logger::log("🔬 Scan de canaux : INDISPONIBLE sur ce montage.");
+    Logger::log("   Changer de canal impose de passer le module en mode configuration");
+    Logger::log("   (M0=M1=1) puis de revenir en mode normal (M0=M1=0) pour lire le bruit.");
+    Logger::log("   Avec un switch mecanique, la sequence n'est pas automatisable : il faut");
+    Logger::log("   cabler M0/M1 sur deux GPIO et definir LORA_USE_SOFTWARE_M0M1.");
+    Logger::log("   Repli : profil de bruit sur le canal courant, qui suffit a dire si le");
+    Logger::log("   plancher est reel (voir ci-dessous).");
+    logNoiseProfile(20);
+#else
+    if (chFrom > chTo) { uint8_t t = chFrom; chFrom = chTo; chTo = t; }
+    if (chTo > 83) chTo = 83;
+
+    Logger::logf("🔬 Scan de bruit, canaux %u a %u — %u relevés", chFrom, chTo,
+                 (unsigned)(chTo - chFrom + 1));
+    Logger::log("   ⚠️  Ecoute seule. La bande ISM 433 utilisable en EMISSION se limite aux");
+    Logger::logf("      canaux %u et %u (433,05-434,79 MHz) : un canal calme hors de cette",
+                 LORA_ISM433_CH_MIN, LORA_ISM433_CH_MAX);
+    Logger::log("      plage se diagnostique mais ne s'exploite pas.");
+    Logger::log("   ⚠️  Chaque changement de canal ecrit les parametres en flash du module.");
+    Logger::log("      Reserver ce scan au diagnostic, pas a une boucle permanente.");
+
+    uint8_t saved = getChannel();
+    int16_t best = 0, worst = -200;
+    uint8_t bestCh = saved;
+    uint32_t valid = 0;
+
+    for (uint8_t ch = chFrom; ch <= chTo; ch++) {
+        if (!applyScanChannel(ch)) {
+            Logger::logf("   CH%02u : changement de canal refuse", ch);
+            continue;
+        }
+        int16_t r = readAmbientNoiseRssi();
+        float f = 410.125f + (float)ch;
+        if (r == LINK_NOISE_UNKNOWN) {
+            Logger::logf("   CH%02u %.3f MHz : lecture indisponible", ch, f);
+            continue;
+        }
+        bool ism = (ch >= LORA_ISM433_CH_MIN && ch <= LORA_ISM433_CH_MAX);
+        Logger::logf("   CH%02u %.3f MHz : %d dBm%s", ch, f, (int)r, ism ? "   [ISM, exploitable]" : "");
+        if (valid == 0 || r < best) { best = r; bestCh = ch; }
+        if (r > worst) worst = r;
+        valid++;
+    }
+
+    applyScanChannel(saved);
+
+    if (valid < 2) {
+        Logger::log("   ➜ Trop peu de relevés valides pour conclure.");
+        return;
+    }
+
+    int16_t shape = worst - best;
+    Logger::logf("   ➜ Plus calme : CH%02u a %d dBm | plus bruyant : %d dBm | amplitude %d dB",
+                 bestCh, (int)best, (int)worst, (int)shape);
+
+    if (shape <= 6) {
+        Logger::log("   ➜ Profil PLAT : bruit large bande, donc AUTO-POLLUTION de la carte.");
+        Logger::log("     Changer de canal ne servira a rien. Traiter le materiel :");
+        Logger::log("       1. USB debranche, sur batterie   2. ESP-NOW coupe des deux cotes");
+        Logger::log("       3. ecran eteint                  4. antenne deportee du boitier");
+    } else {
+        Logger::log("   ➜ Profil BOSSELE : interference EXTERNE.");
+        Logger::logf("     Mais seuls les canaux %u et %u sont exploitables en emission.",
+                     LORA_ISM433_CH_MIN, LORA_ISM433_CH_MAX);
+        Logger::log("     Si les deux sont bruyants, le changement de canal ne sauve rien et");
+        Logger::log("     le vrai repli est la bande 868/920 (voir LORA_DUAL_BAND_PLAN.md).");
+    }
+#endif
+}
+
+#ifdef LORA_USE_SOFTWARE_M0M1
+bool LoRaCommunication::applyScanChannel(uint8_t ch) {
+    // Mode configuration : seul mode ou les registres sont accessibles.
+    digitalWrite(LORA_M0_PIN, HIGH);
+    digitalWrite(LORA_M1_PIN, HIGH);
+    delay(60);
+
+    loraConfig.own_channel = ch;
+    loraConfig.target_channel = ch;
+    int r = lora.InitLoRaSetting(loraConfig);
+
+    // Retour en mode normal : la lecture du bruit ambiant (C0C1C2C3) s'y fait.
+    digitalWrite(LORA_M0_PIN, LOW);
+    digitalWrite(LORA_M1_PIN, LOW);
+    delay(60);
+
+    return (r == 0);
+}
+#endif
+
+void LoRaCommunication::logLinkSummary() {
+    if (linkStatsBuoyId == 0xFF || linkWindows == 0) return;
+
+    uint32_t ok = linkWindows - linkEmptyWindows;
+    Logger::logf("═══ BILAN Bouee #%u | %s | %lu fen. de 5 s | %lu recues (%lu%%) | "
+                 "pire serie %u fen. (%u s)",
+                 (unsigned)linkStatsBuoyId,
+                 getAirRateName(),
+                 (unsigned long)linkWindows,
+                 (unsigned long)ok,
+                 (unsigned long)(100UL * ok / linkWindows),
+                 (unsigned)linkEmptyStreakMax,
+                 (unsigned)(linkEmptyStreakMax * 5));
+}
+
+void LoRaCommunication::resetLinkStats(uint8_t buoyId) {
+    // Cloturer le palier precedent AVANT de remettre a zero : sur une campagne
+    // multi-bouees, c'est cette ligne qui porte le resultat du palier. Melanger
+    // les statistiques de deux bouees dans un meme taux de reception les rendrait
+    // toutes deux ininterpretables.
+    logLinkSummary();
+
     linkRxCount = 0;
     linkRssiSum = 0;
     linkRssiMin = 0;
     linkRssiMax = -200;
+    linkWindows = 0;
+    linkEmptyWindows = 0;
+    linkEmptyStreak = 0;
+    linkEmptyStreakMax = 0;
+    linkStatsBuoyId = buoyId;
+
+    Logger::logf("📊 Stats de liaison remises a zero — palier Bouee #%u", (unsigned)buoyId);
 }
 
-int16_t LoRaCommunication::getAirRateSensitivity() const {
-    // Sensibilite indicative du SX1262 par debit, en dBm. Sert uniquement a
-    // afficher une marge approximative pendant les essais de portee.
-    switch (airRate) {
-        case LoRaAirRate::AIR_2400:  return -129;
-        case LoRaAirRate::AIR_4800:  return -126;
-        case LoRaAirRate::AIR_9600:  return -124;
-        case LoRaAirRate::AIR_19200: return -121;
-        case LoRaAirRate::AIR_38400: return -118;
-        case LoRaAirRate::AIR_62500: return -112;
+void LoRaCommunication::logLinkQuality(uint8_t activeBuoyId) {
+    // Bilan de liaison periodique — instrument d'essai de portee.
+    //
+    // Ce bilan affichait une colonne « marge ~N dB » calculee comme
+    // RSSI - sensibilite_datasheet. Elle a ete RETIREE : elle indiquait encore
+    // 35 a 42 dB au moment ou la liaison decrochait pendant la campagne du
+    // 30/08/2026 (GATEWAY_DESIGN.md § A.8). La raison est que le RSSI paquet
+    // du E220 plafonne au niveau de bruit des que le SNR devient negatif — il
+    // est reste plat a ±2 dB de 50 m a 130 m, sur les six debits testes. La
+    // marge reelle vit alors dans le SNR, que le module n'expose pas.
+    //
+    // La grandeur qui a effectivement suivi la distance est le TAUX DE
+    // RECEPTION. C'est elle qui est mise en avant ici.
+    const uint32_t LINK_LOG_INTERVAL = 5000;
+
+    // Changement de bouee = nouveau palier. On cloture et on repart de zero,
+    // avant meme de tester la cadence : les trames deja accumulees appartiennent
+    // a la bouee precedente.
+    if (activeBuoyId != linkStatsBuoyId) {
+        resetLinkStats(activeBuoyId);
+        lastLinkLogTime = millis();   // repartir sur une fenetre pleine
+        return;
     }
-    return -129;
+
+    uint32_t now = millis();
+    if (now - lastLinkLogTime < LINK_LOG_INTERVAL) return;
+    lastLinkLogTime = now;
+
+#if LINK_POLL_NOISE
+    linkNoiseFloor = readAmbientNoiseRssi();
+#endif
+
+    linkWindows++;
+
+    if (linkRxCount == 0) {
+        linkEmptyWindows++;
+        linkEmptyStreak++;
+        if (linkEmptyStreak > linkEmptyStreakMax) linkEmptyStreakMax = linkEmptyStreak;
+
+        Logger::logf("📶 LIAISON B#%u %s | AUCUNE trame sur %lu s | %u fen. vides d'affilee | recu %lu/%lu fen. (%lu%%)",
+                     (unsigned)linkStatsBuoyId,
+                     getAirRateName(),
+                     (unsigned long)(LINK_LOG_INTERVAL / 1000),
+                     (unsigned)linkEmptyStreak,
+                     (unsigned long)(linkWindows - linkEmptyWindows),
+                     (unsigned long)linkWindows,
+                     (unsigned long)(100UL * (linkWindows - linkEmptyWindows) / linkWindows));
+    } else {
+        linkEmptyStreak = 0;
+
+        // Rapport signal/bruit approche — le plus proche d'un SNR que le E220
+        // permette. Non affiche si le bruit n'a pas pu etre lu.
+        char sb[24] = "";
+        if (linkNoiseFloor != LINK_NOISE_UNKNOWN) {
+            snprintf(sb, sizeof(sb), " | S/B ~%+d dB", (int)(linkRssiMin - linkNoiseFloor));
+        }
+
+        Logger::logf("📶 LIAISON B#%u %s | %lu trames | RSSI moy %d | min %d | max %d dBm%s | recu %lu/%lu fen. (%lu%%)",
+                     (unsigned)linkStatsBuoyId,
+                     getAirRateName(),
+                     (unsigned long)linkRxCount,
+                     (int)(linkRssiSum / (int32_t)linkRxCount),
+                     (int)linkRssiMin, (int)linkRssiMax,
+                     sb,
+                     (unsigned long)(linkWindows - linkEmptyWindows),
+                     (unsigned long)linkWindows,
+                     (unsigned long)(100UL * (linkWindows - linkEmptyWindows) / linkWindows));
+    }
+
+    // Rappel de la pire serie, qui decrit la frange intermittente : c'est elle
+    // qui dimensionne DELAY_PARTIAL_REFRESH_DL cote bouee (GATEWAY_DESIGN §4.8).
+    if (linkEmptyStreakMax >= 2 && linkEmptyStreak == 0) {
+        Logger::logf("   ↳ pire serie depuis le demarrage : %u fen. vides (%u s sans liaison)",
+                     (unsigned)linkEmptyStreakMax,
+                     (unsigned)(linkEmptyStreakMax * (LINK_LOG_INTERVAL / 1000)));
+    }
+
+    linkRxCount = 0;
+    linkRssiSum = 0;
+    linkRssiMin = 0;
+    linkRssiMax = -200;
 }
 
 uint8_t LoRaCommunication::getAirDataRate() const {
@@ -284,8 +642,25 @@ bool LoRaCommunication::begin() {
     if (Serial2.available()) {
         Logger::log("✓ Module LoRa E220-JP répond correctement (UART test).");
         while (Serial2.available()) Serial2.read();
+        // Le test UART est le SEUL indicateur fiable du mode reel. En mode
+        // normal (P2P transparent) tout octet ecrit sur l'UART est EMIS PAR
+        // RADIO et rien ne revient ; une reponse ne peut donc venir que du
+        // mode configuration. Le dire explicitement : le mode ne se deduisait
+        // jusqu'ici que de deux lignes eloignees, ce qui est une source
+        // d'erreur garantie sur une flottille a configurer.
+        Logger::log("");
+        Logger::log("🔎 LoRa: MODULE EN MODE CONFIGURATION — la liaison radio est INACTIVE.");
+        Logger::log("   Etat attendu UNIQUEMENT pour ecrire la configuration.");
+        Logger::log("   ➜ Pour exploiter : basculer le switch M0/M1, COUPER L'ALIMENTATION,");
+        Logger::log("     puis redemarrer. Un simple reset ne suffit pas — le firmware ne");
+        Logger::log("     coupe jamais l'alimentation du module.");
     } else {
         Logger::log("ℹ️  Pas de réponse immédiate au test UART (possible si switch OFF)");
+        // Aucune reponse = mode normal : en P2P transparent, les octets ecrits
+        // sur l'UART partent par radio et rien ne revient. C'est l'etat
+        // d'exploitation.
+        Logger::log("");
+        Logger::log("🔎 LoRa: MODULE EN MODE NORMAL — liaison radio active.");
     }
 
     Logger::log("");
@@ -317,6 +692,9 @@ bool LoRaCommunication::begin() {
     // du champ REG0[4:0].
     String rateBits = String(getAirDataRate(), BIN);
     while (rateBits.length() < 5) rateBits = "0" + rateBits;
+    // Debit SOUHAITE : la ligne s'intitule « Configuration prepared », elle
+    // decrit ce qu'on s'apprete a ecrire. Le constat de ce qui a reellement
+    // ete applique vient juste apres la tentative d'ecriture.
     Logger::logf("   - Air data rate: %s - REG0 0b%s%s",
                  getAirRateName(),
                  rateBits.c_str(),
@@ -356,10 +734,74 @@ bool LoRaCommunication::begin() {
 
     Logger::log("✓ LoRa: Ready to operate");
     Logger::log("");
-    
+
+    // Plancher de bruit du site, lu UNE fois, ici, parce que c'est le seul
+    // moment ou l'UART est garanti silencieux : aucune trame n'a encore ete
+    // recue. Le lire plus tard couterait des trames (voir LINK_POLL_NOISE).
+    //
+    // C'est ce qui rend exploitable le bilan de liaison : sans plancher de
+    // bruit, un RSSI de -85 dBm ne dit pas si l'on est a 3 dB ou a 30 dB du
+    // decrochage. La campagne du 30/08/2026 a bute exactement la-dessus
+    // (GATEWAY_DESIGN.md § A.8).
+    // Le module n'est en mode NORMAL que si l'ecriture de configuration a
+    // ECHOUE : InitLoRaSetting() ne reussit qu'en mode configuration. Un succes
+    // signifie donc switch sur ON, et il ne faut alors surtout pas envoyer la
+    // sequence de lecture du bruit — voir readAmbientNoiseRssi().
+    const bool moduleEnModeConfig = (result == 0);
+    configApplied = moduleEnModeConfig;
+
+    if (!configApplied) {
+        // Constat factuel, pas une alerte : avec le switch sur OFF l'ecriture
+        // echoue TOUJOURS, c'est le cas nominal. Un avertissement qui se
+        // declenche a chaque demarrage devient invisible ; on se contente donc
+        // de dire ce qui est, et ou regarder si la liaison ne passe pas.
+        Logger::log("ℹ️  LoRa: configuration non ecrite a ce demarrage (switch M0/M1 sur OFF).");
+        Logger::log("   Le module utilise celle memorisee lors du dernier demarrage switch ON.");
+        Logger::log("   Les valeurs ci-dessus sont celles DEMANDEES par le firmware.");
+        Logger::log("   Liaison muette ? verifier ce point en premier (GATEWAY_DESIGN §5.1).");
+        Logger::log("");
+    }
+
+    if (moduleEnModeConfig) {
+        Logger::log("ℹ️  LoRa: module en mode CONFIGURATION — mesure de bruit reportee.");
+        Logger::log("   La configuration vient d'etre ecrite, dont le bit de bruit ambiant.");
+        Logger::log("   ➜ Mettre le switch M0/M1 sur OFF et REDEMARRER : c'est au demarrage");
+        Logger::log("     suivant que le plancher de bruit sera mesure.");
+        linkNoiseFloor = LINK_NOISE_UNKNOWN;
+    } else {
+        linkNoiseFloor = readAmbientNoiseRssi();
+    }
+
+    if (linkNoiseFloor != LINK_NOISE_UNKNOWN) {
+        Logger::logf("✓ LoRa: plancher de bruit mesure : %d dBm", (int)linkNoiseFloor);
+        if (linkNoiseFloor > -100) {
+            Logger::logf("   ⚠️  Bruit eleve — le bruit thermique attendu en 125 kHz est"
+                         " d'environ -117 dBm. %d dB au-dessus : interference locale ou"
+                         " rayonnement propre a suspecter, la portee en depend directement.",
+                         (int)(linkNoiseFloor + 117));
+        }
+    } else {
+        Logger::log("ℹ️  LoRa: plancher de bruit non disponible — le bilan de liaison"
+                    " affichera le RSSI sans rapport signal/bruit.");
+    }
+    Logger::log("");
+
+#if LORA_NOISE_DIAG
+    // Diagnostic de bruit — voir LORA_NOISE_DIAG dans LoRaCommunication.h.
+    // Placé ici, avant tout trafic : l'UART du module est encore silencieux.
+    // Sauté en mode configuration, pour la meme raison que la mesure de bruit.
+    if (!moduleEnModeConfig) {
+        Logger::log("");
+        scanChannelNoise(LORA_SCAN_CH_MIN, LORA_SCAN_CH_MAX);
+        Logger::log("");
+    } else {
+        Logger::log("ℹ️  LoRa: diagnostic de bruit saute (module en mode configuration).");
+    }
+#endif
+
     Logger::log("✓ LoRa: Prêt à recevoir");
     Logger::log("");
-    
+
     return true;
 }
 
@@ -375,23 +817,43 @@ void LoRaCommunication::listenForResponses()
     // Sans cette garde, la fonction rendait tout le firmware muet.
     LoggerScope logScope(ecrLORACommunication, false);
 
-    // Prendre le mutex (attente max 10ms pour éviter blocage)
+    // ⚠️ Le mutex ne protege QUE l'acces au module (Serial2 + RecieveFrame).
+    // Le decodage et le traitement des ACK se font APRES l'avoir rendu.
+    //
+    // Auparavant il etait tenu pendant tout le traitement, processAck()
+    // compris. Depuis que les buffers concatenes sont decoupes correctement,
+    // processAck() peut etre appele DEUX fois par lecture (la bouee emet
+    // chaque ACK deux fois), ce qui allongeait d'autant la section critique.
+    // sendCommandPacket() n'attend le mutex que 50 ms : au-dela il abandonne
+    // et l'operateur voit « Echec envoi commande ». Une commande de securite
+    // comme NAV_STOP ne doit pas echouer parce qu'un ACK etait en cours de
+    // decodage.
+    RecvFrame_t recvFrame;
+    bool frameRecue = false;
+
     if (xSemaphoreTake(loraMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
         // Mutex non disponible, quelqu'un d'autre utilise le LoRa
         return;
     }
-    
-    // Écoute non-bloquante des ACK envoyés par les bouées
-    // après réception de COMMAND ou heartbeat
+    if (Serial2.available() > 0) {
+        frameRecue = (lora.RecieveFrame(&recvFrame) == 0);
+    }
+    xSemaphoreGive(loraMutex);
 
-    if (Serial2.available() > 0)
+    if (frameRecue)
     {
-        RecvFrame_t recvFrame;
-        if (lora.RecieveFrame(&recvFrame) == 0)
+        if (recvFrame.recv_data_len > 0)
         {
             // Frame reçue
             lastRssi = recvFrame.rssi;
-            lastSnr = 0.0f;
+            // Le E220 n'expose pas le SNR (voir LoRaCommunication.h). On publie
+            // le rapport signal/bruit approche a partir du plancher de bruit,
+            // qui est la meilleure approximation disponible — et NAN quand ce
+            // plancher n'a pas pu etre lu, pour ne pas faire passer une absence
+            // de mesure pour un SNR de 0 dB.
+            lastSnr = (linkNoiseFloor != LINK_NOISE_UNKNOWN)
+                          ? (float)(lastRssi - linkNoiseFloor)
+                          : NAN;
             noteLinkSample(lastRssi);
 
             // Vérifier le type de message
@@ -401,42 +863,102 @@ void LoRaCommunication::listenForResponses()
                 
                 Logger::logf("📥 LoRa: Paquet reçu - type=%d, taille=%d bytes", *msgType, recvFrame.recv_data_len);
 
-                // Traiter ACK (enrichi avec état)
-                if (*msgType == LoRaMessageType::ACK &&
-                         recvFrame.recv_data_len == sizeof(AckWithStatePacketLora))
+                // ⚠️ NE PAS exiger une longueur EXACTE sur tout le buffer.
+                //
+                // Une lecture UART peut contenir PLUSIEURS trames. La bouee
+                // emet chaque ACK DEUX fois (ACK_REPEAT_COUNT), et le E220 les
+                // livre regulierement concatenes : on observe couramment des
+                // buffers de 37 octets = 18 + 18 + 1. L'ancien test
+                // « recv_data_len == sizeof(AckWithStatePacketLora) » echouait
+                // alors, et les DEUX copies etaient perdues — donc une
+                // reemission de commande, et un acquittement jamais vu par
+                // l'operateur.
+                //
+                // NOTE : cela n'a PAS fausse le taux de reception des campagnes
+                // A.8 / A.9. noteLinkSample() est appele AVANT ce parsing, donc
+                // un buffer concatene comptait deja comme une trame recue. Le
+                // defaut coutait des acquittements, pas des fenetres vides.
+                //
+                // On parcourt donc le buffer trame par trame, en relisant le
+                // messageType a chaque position. Cf. LORA_PROTOCOL.md §8.3 et
+                // le meme correctif cote bouee (maintainConnection).
+                size_t offset = 0;
+                size_t ackCount = 0;
+
+                while (offset < recvFrame.recv_data_len)
                 {
-                    AckWithStatePacketLora *ack = (AckWithStatePacketLora *)recvFrame.recv_data;
-                    
-                    Logger::logf("📥 ACK+State reçu de Bouée #%d (RSSI=%d dBm)",
-                                 ack->buoyId, lastRssi);
-                    
-                    // Traiter l'ACK enrichi
-                    processAck(*ack);
-                }
-                // Support legacy simple ACK (taille AckPacketLora)
-                else if (*msgType == LoRaMessageType::ACK &&
-                         recvFrame.recv_data_len == sizeof(AckPacketLora))
-                {
-                    AckPacketLora *legacyAck = (AckPacketLora *)recvFrame.recv_data;
-                    
-                    Logger::logf("📥 ACK simple (legacy) reçu de Bouée #%d (RSSI=%d dBm)",
-                                 legacyAck->buoyId, lastRssi);
-                    
-                    // Convertir en AckWithStatePacketLora (sans données d'état)
-                    AckWithStatePacketLora enrichedAck;
-                    memset(&enrichedAck, 0, sizeof(enrichedAck));
-                    enrichedAck.messageType = legacyAck->messageType;
-                    enrichedAck.buoyId = legacyAck->buoyId;
-                    enrichedAck.commandTimestamp = legacyAck->commandTimestamp;
-                    enrichedAck.commandType = legacyAck->commandType;
-                    processAck(enrichedAck);
+                    LoRaMessageType frameType = (LoRaMessageType)recvFrame.recv_data[offset];
+                    size_t remaining = recvFrame.recv_data_len - offset;
+                    size_t frameSize = 0;
+
+                    if (frameType == LoRaMessageType::ACK)
+                    {
+                        // Ambiguite assumee : le type ACK couvre deux tailles,
+                        // AckWithStatePacketLora (18 o) et le legacy
+                        // AckPacketLora (7 o), sans rien pour les distinguer.
+                        // On privilegie 18 des qu'il y a la place : c'est ce que
+                        // toutes les bouees en service emettent. Le legacy n'est
+                        // reconnu que s'il ne reste que 7 octets.
+                        frameSize = (remaining >= sizeof(AckWithStatePacketLora))
+                                        ? sizeof(AckWithStatePacketLora)
+                                        : sizeof(AckPacketLora);
+                    }
+                    else if (frameType == LoRaMessageType::COMMAND)
+                    {
+                        frameSize = sizeof(CommandPacketLora);   // commande d'un autre maitre : enjambee
+                    }
+                    else
+                    {
+                        Logger::logf("⚠️  LoRa: type inconnu 0x%02X a l'offset %u — reste du buffer ignore (%u octets)",
+                                     (int)frameType, (unsigned)offset, (unsigned)remaining);
+                        break;
+                    }
+
+                    if (frameSize > remaining)
+                    {
+                        Logger::logf("⚠️  LoRa: trame tronquee a l'offset %u (%u octets restants, %u attendus)",
+                                     (unsigned)offset, (unsigned)remaining, (unsigned)frameSize);
+                        break;
+                    }
+
+                    if (frameType == LoRaMessageType::ACK)
+                    {
+                        if (frameSize == sizeof(AckWithStatePacketLora))
+                        {
+                            AckWithStatePacketLora *ack =
+                                (AckWithStatePacketLora *)(recvFrame.recv_data + offset);
+
+                            if (ackCount == 0)
+                            {
+                                Logger::logf("📥 ACK+State reçu de Bouée #%d (RSSI=%d dBm)",
+                                             ack->buoyId, lastRssi);
+                            }
+                            processAck(*ack);
+                        }
+                        else
+                        {
+                            AckPacketLora *legacyAck =
+                                (AckPacketLora *)(recvFrame.recv_data + offset);
+
+                            Logger::logf("📥 ACK simple (legacy) reçu de Bouée #%d (RSSI=%d dBm)",
+                                         legacyAck->buoyId, lastRssi);
+
+                            AckWithStatePacketLora enrichedAck;
+                            memset(&enrichedAck, 0, sizeof(enrichedAck));
+                            enrichedAck.messageType = legacyAck->messageType;
+                            enrichedAck.buoyId = legacyAck->buoyId;
+                            enrichedAck.commandTimestamp = legacyAck->commandTimestamp;
+                            enrichedAck.commandType = legacyAck->commandType;
+                            processAck(enrichedAck);
+                        }
+                        ackCount++;
+                    }
+
+                    offset += frameSize;
                 }
             }
         }
     }
-    
-    // Libérer le mutex
-    xSemaphoreGive(loraMutex);
 }
 
 //Méthode deprecated - remplacée par le polling séquentiel dans update()
@@ -502,10 +1024,17 @@ void LoRaCommunication::listenForResponses()
             {
                 // Frame received
                 lastRssi = recvFrame.rssi;
-                lastSnr = 0.0f;
+                lastSnr = (linkNoiseFloor != LINK_NOISE_UNKNOWN)
+                              ? (float)(lastRssi - linkNoiseFloor)
+                              : NAN;
 
-                Logger::logf("   📶 Réception LoRa: RSSI=%d dBm, SNR=%.1f dB, size=%d bytes",
-                             lastRssi, lastSnr, recvFrame.recv_data_len);
+                if (isnan(lastSnr)) {
+                    Logger::logf("   📶 Réception LoRa: RSSI=%d dBm, S/B non mesure, size=%d bytes",
+                                 lastRssi, recvFrame.recv_data_len);
+                } else {
+                    Logger::logf("   📶 Réception LoRa: RSSI=%d dBm, S/B~%+.0f dB, size=%d bytes",
+                                 lastRssi, lastSnr, recvFrame.recv_data_len);
+                }
 
                 // Check if this is a RESPONSE packet
                 if (recvFrame.recv_data_len >= sizeof(LoRaMessageType))
