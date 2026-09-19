@@ -670,7 +670,7 @@ bool LoRaCommunication::begin() {
 
     // Configure LoRa E220-JP parameters
     loraConfig.own_address = 0x0000;  // Adresse joystick / broadcast
-    loraConfig.baud_rate = BAUD_9600;
+    loraConfig.baud_rate = BAUD_115200;   // UART module en mode normal (LORA_UART_BAUD)
     loraConfig.air_data_rate = getAirDataRate();
     loraConfig.subpacket_size = SUBPACKET_200_BYTE;
     loraConfig.rssi_ambient_noise_flag = RSSI_AMBIENT_NOISE_ENABLE;
@@ -731,6 +731,12 @@ bool LoRaCommunication::begin() {
         // (some libraries require this even if module rejects config)
         lora.InitLoRaSetting(loraConfig);
     }
+
+    // Bascule de l'UART hote au debit du mode normal. Si la configuration
+    // vient d'etre ecrite (switch ON), le module reste a 9600 jusqu'au
+    // redemarrage — rien ne lui est plus envoye d'ici la.
+    Serial2.updateBaudRate(LORA_UART_BAUD);
+    Logger::logf("✓ LoRa: UART hote a %d bauds (mode normal)", LORA_UART_BAUD);
 
     Logger::log("✓ LoRa: Ready to operate");
     Logger::log("");

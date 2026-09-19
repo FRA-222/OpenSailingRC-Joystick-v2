@@ -144,7 +144,11 @@ enum class LoRaAirRate {
 #define LORA_ADDRESS_H 0x00         // High byte of address
 #define LORA_ADDRESS_L 0x07         // Low byte of address (Joystick) - Modifié pour correspondre à la Bouée
 #define LORA_NETID 0x00             // Network ID
-#define LORA_UART_BAUD 9600         // UART baud rate (default)
+// UART hôte <-> module en mode normal (GATEWAY_DESIGN.md §5.1 point 2). Le mode
+// configuration reste à CONFIG_MODE_BAUD (9600, imposé par le module). Identique
+// bouée / joystick / passerelle : un module encore à 9600 dans son registre
+// reste muet — refaire un démarrage switch M0/M1 ON après ce changement.
+#define LORA_UART_BAUD 115200
 
 /**
  * @brief Buoy state structure (received via LoRa)
