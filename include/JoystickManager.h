@@ -24,18 +24,12 @@
 #include "HardwareConfig.h"
 #include "Logger.h"
 
-// Axis indices
-#define AXIS_LEFT_X  0
-#define AXIS_LEFT_Y  1
-#define AXIS_RIGHT_X 2
-#define AXIS_RIGHT_Y 3
-
-// Button indices
-#define BTN_LEFT_STICK  0
-#define BTN_RIGHT_STICK 1
-#define BTN_LEFT        2
-#define BTN_RIGHT       3
-#define BTN_ATOM_SCREEN 4  ///< Atom S3 built-in screen button
+// Indices d'axes (AXIS_*) et de boutons (BTN_*) : HardwareConfig.h.
+//
+// Une seule interface pour deux matériels : JoystickManagerV1.cpp (AtomS3 +
+// STM32) et JoystickManagerV2.cpp (Core2 + Unit Joystick / ByteButton / Dual
+// Button), sélectionnés par l'environnement PlatformIO. Les méthodes propres
+// à un module absent (ByteButton, LEDs) sont neutres sur l'autre matériel.
 
 /**
  * @brief Class to manage joysticks and buttons

@@ -452,6 +452,19 @@ uint8_t CommandManager::sendHeartbeatToAllBuoys() {
 /**
  * @brief Generate and send HEARTBEAT command to a specific buoy
  */
+bool CommandManager::generateObservableCommand(uint8_t targetBuoyId) {
+    Command cmd;
+    cmd.targetBuoyId = targetBuoyId;
+    cmd.type = CMD_OBSERVABLE;
+    cmd.timestamp = millis();
+
+    bool success = comm.sendCommand(targetBuoyId, cmd);
+    if (!success) {
+        Logger::logf("✗ Échec demande OBSERVABLE Bouée #%d", targetBuoyId);
+    }
+    return success;
+}
+
 bool CommandManager::generateHeartbeatCommand(uint8_t targetBuoyId) {
     Command heartbeatCmd;
     heartbeatCmd.targetBuoyId = targetBuoyId;

@@ -887,27 +887,24 @@ void LoRaCommunication::listenForResponses()
 
                 while (offset < recvFrame.recv_data_len)
                 {
-                    LoRaMessageType frameType = (LoRaMessageType)recvFrame.recv_data[offset];
+                    uint8_t frameType = recvFrame.recv_data[offset];
                     size_t remaining = recvFrame.recv_data_len - offset;
-                    size_t frameSize = 0;
+                    size_t frameSize = loRaFrameSize(frameType);   // LoRaProtocol.h
 
-                    if (frameType == LoRaMessageType::ACK)
+                    if (frameType == (uint8_t)LoRaMessageType::ACK)
                     {
                         // Ambiguite assumee : le type ACK couvre deux tailles,
                         // AckWithStatePacketLora (18 o) et le legacy
                         // AckPacketLora (7 o), sans rien pour les distinguer.
                         // On privilegie 18 des qu'il y a la place : c'est ce que
-                        // toutes les bouees en service emettent. Le legacy n'est
+                        // toutes les bouees v1 emettent. Le legacy n'est
                         // reconnu que s'il ne reste que 7 octets.
                         frameSize = (remaining >= sizeof(AckWithStatePacketLora))
                                         ? sizeof(AckWithStatePacketLora)
                                         : sizeof(AckPacketLora);
                     }
-                    else if (frameType == LoRaMessageType::COMMAND)
-                    {
-                        frameSize = sizeof(CommandPacketLora);   // commande d'un autre maitre : enjambee
-                    }
-                    else
+
+                    if (frameSize == 0)
                     {
                         Logger::logf("⚠️  LoRa: type inconnu 0x%02X a l'offset %u — reste du buffer ignore (%u octets)",
                                      (int)frameType, (unsigned)offset, (unsigned)remaining);
@@ -921,37 +918,68 @@ void LoRaCommunication::listenForResponses()
                         break;
                     }
 
-                    if (frameType == LoRaMessageType::ACK)
+                    switch ((LoRaMessageType)frameType)
                     {
-                        if (frameSize == sizeof(AckWithStatePacketLora))
+                        case LoRaMessageType::BUOY_STATUS:
                         {
-                            AckWithStatePacketLora *ack =
-                                (AckWithStatePacketLora *)(recvFrame.recv_data + offset);
+                            // Protocole v2 : reponse a nos COMMAND_BUOY_STATUS (0x08)
+                            BuoyStatusPacketLora *status =
+                                (BuoyStatusPacketLora *)(recvFrame.recv_data + offset);
+                            Logger::logf("📥 BUOY_STATUS reçu de Bouée #%d (RSSI=%d dBm)",
+                                         LoRaCodec::nibbleLo(status->buoyIds), lastRssi);
+                            processBuoyStatus(*status);
+                            break;
+                        }
 
-                            if (ackCount == 0)
+                        case LoRaMessageType::OBSERVABLE:
+                        {
+                            // Protocole v2 : reponse a notre CMD_OBSERVABLE periodique
+                            ObservablePacketLora *obs =
+                                (ObservablePacketLora *)(recvFrame.recv_data + offset);
+                            Logger::logf("📥 OBSERVABLE reçu de Bouée #%d (RSSI=%d dBm)", obs->buoyId, lastRssi);
+                            processObservable(*obs);
+                            break;
+                        }
+
+                        case LoRaMessageType::ACK:
+                        {
+                            // Protocole v1 : conserve pour une bouee qui repondrait encore en 0x04
+                            if (frameSize == sizeof(AckWithStatePacketLora))
                             {
-                                Logger::logf("📥 ACK+State reçu de Bouée #%d (RSSI=%d dBm)",
-                                             ack->buoyId, lastRssi);
+                                AckWithStatePacketLora *ack =
+                                    (AckWithStatePacketLora *)(recvFrame.recv_data + offset);
+
+                                if (ackCount == 0)
+                                {
+                                    Logger::logf("📥 ACK+State reçu de Bouée #%d (RSSI=%d dBm)",
+                                                 ack->buoyId, lastRssi);
+                                }
+                                processAck(*ack);
                             }
-                            processAck(*ack);
-                        }
-                        else
-                        {
-                            AckPacketLora *legacyAck =
-                                (AckPacketLora *)(recvFrame.recv_data + offset);
+                            else
+                            {
+                                AckPacketLora *legacyAck =
+                                    (AckPacketLora *)(recvFrame.recv_data + offset);
 
-                            Logger::logf("📥 ACK simple (legacy) reçu de Bouée #%d (RSSI=%d dBm)",
-                                         legacyAck->buoyId, lastRssi);
+                                Logger::logf("📥 ACK simple (legacy) reçu de Bouée #%d (RSSI=%d dBm)",
+                                             legacyAck->buoyId, lastRssi);
 
-                            AckWithStatePacketLora enrichedAck;
-                            memset(&enrichedAck, 0, sizeof(enrichedAck));
-                            enrichedAck.messageType = legacyAck->messageType;
-                            enrichedAck.buoyId = legacyAck->buoyId;
-                            enrichedAck.commandTimestamp = legacyAck->commandTimestamp;
-                            enrichedAck.commandType = legacyAck->commandType;
-                            processAck(enrichedAck);
+                                AckWithStatePacketLora enrichedAck;
+                                memset(&enrichedAck, 0, sizeof(enrichedAck));
+                                enrichedAck.messageType = legacyAck->messageType;
+                                enrichedAck.buoyId = legacyAck->buoyId;
+                                enrichedAck.commandTimestamp = legacyAck->commandTimestamp;
+                                enrichedAck.commandType = legacyAck->commandType;
+                                processAck(enrichedAck);
+                            }
+                            ackCount++;
+                            break;
                         }
-                        ackCount++;
+
+                        default:
+                            // COMMAND* d'un autre maitre, OBSERVABLE* destinees a la
+                            // passerelle : enjambees sans traitement.
+                            break;
                     }
 
                     offset += frameSize;
@@ -961,122 +989,7 @@ void LoRaCommunication::listenForResponses()
     }
 }
 
-//Méthode deprecated - remplacée par le polling séquentiel dans update()
-/* bool LoRaCommunication::pollBuoy(uint8_t buoyId, uint32_t timeoutMs) {
-        
-    
-    // Create REQUEST packet
-    RequestPacketLora request;
-    request.messageType = LoRaMessageType::REQUEST;
-    request.targetBuoyId = buoyId;
-    request.timestamp = millis();
-    
-    // Send REQUEST to buoy
-    loraConfig.target_address = 0x0000;  // Broadcast mode (comme dans l'exemple M5Stack)
-    loraConfig.target_channel = getChannel();
-    
-    // LOG DÉTAILLÉ DU PAQUET REQUEST
-    Logger::log("📤 ========== ENVOI REQUEST LoRa ==========");
-    Logger::logf("   Taille paquet : %d bytes", sizeof(request));
-    Logger::logf("   messageType   : %d (0x%02X)", (uint8_t)request.messageType, (uint8_t)request.messageType);
-    Logger::logf("   targetBuoyId  : %d", request.targetBuoyId);
-    Logger::logf("   timestamp     : %lu", request.timestamp);
-    
-    // Affichage hexadécimal du paquet complet
-    Logger::log("   Données brutes (hex):");
-    uint8_t* data = (uint8_t*)&request;
-    char hexStr[50];
-    for (size_t i = 0; i < sizeof(request); i++) {
-        sprintf(hexStr + (i*3), "%02X ", data[i]);
-    }
-    Logger::logf("   %s", hexStr);
-    Logger::log("==========================================");
-    
-    // Prendre le mutex
-    if (xSemaphoreTake(loraMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        Logger::log("✗ LoRa: Timeout acquisition mutex pour pollBuoy");
-        return false;
-    }
-    
-    int result = lora.SendFrame(loraConfig, (uint8_t*)&request, sizeof(request));
-    
-    if (result != 0) {
-        xSemaphoreGive(loraMutex);  // Libérer avant de sortir
-        Logger::logf("✗ LoRa: Échec envoi REQUEST à Bouée #%d (err=%d)", buoyId, result);
-        return false;
-    }
-    
-    Logger::logf("   ✓ REQUEST envoyé, attente réponse (%d ms max)...", timeoutMs);
-    
-    // Wait for RESPONSE with timeout
-    uint32_t startTime = millis();
-
-    while (millis() - startTime < timeoutMs)
-    {
-        // Check if data is available before calling RecieveFrame
-        // (RecieveFrame bloque en interne si pas de données)
-        if (Serial2.available() > 0)
-        {
-
-            RecvFrame_t recvFrame;
-
-            if (lora.RecieveFrame(&recvFrame) == 0)
-            {
-                // Frame received
-                lastRssi = recvFrame.rssi;
-                lastSnr = (linkNoiseFloor != LINK_NOISE_UNKNOWN)
-                              ? (float)(lastRssi - linkNoiseFloor)
-                              : NAN;
-
-                if (isnan(lastSnr)) {
-                    Logger::logf("   📶 Réception LoRa: RSSI=%d dBm, S/B non mesure, size=%d bytes",
-                                 lastRssi, recvFrame.recv_data_len);
-                } else {
-                    Logger::logf("   📶 Réception LoRa: RSSI=%d dBm, S/B~%+.0f dB, size=%d bytes",
-                                 lastRssi, lastSnr, recvFrame.recv_data_len);
-                }
-
-                // Check if this is a RESPONSE packet
-                if (recvFrame.recv_data_len >= sizeof(LoRaMessageType))
-                {
-                    LoRaMessageType *msgType = (LoRaMessageType *)recvFrame.recv_data;
-
-                    Logger::logf("📥 Réception paquet LoRa: type=%d, size=%d bytes",
-                                 *msgType, recvFrame.recv_data_len);
-
-                    if (*msgType == LoRaMessageType::RESPONSE &&
-                        recvFrame.recv_data_len == sizeof(ResponsePacketLora))
-                    {
-
-                        ResponsePacketLora *response = (ResponsePacketLora *)recvFrame.recv_data;
-
-                        // Check if response is from the buoy we polled
-                        if (response->state.buoyId == buoyId)
-                        {
-                            // Process the response
-                            processReceivedMessage((uint8_t *)&response->state, sizeof(BuoyStateLora));
-                            xSemaphoreGive(loraMutex);  // Libérer avant de sortir
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        delay(10); // Small delay to avoid CPU hogging
-    }
-    
-    // Libérer le mutex avant de sortir
-    xSemaphoreGive(loraMutex);
-
-    // Timeout - mark buoy as potentially disconnected
-    int8_t index = findBuoyById(buoyId);
-    if (index >= 0) {
-        // Don't unregister immediately, just update timestamp
-        // isBuoyConnected() will handle timeout logic
-    }
-    
-    return false;
-} */
+// pollBuoy() (REQUEST/RESPONSE) retiré : le protocole est COMMAND → réponse depuis 2025.
 
 bool LoRaCommunication::sendCommand(uint8_t buoyId, const Command& cmd) {
 
@@ -1089,8 +1002,13 @@ bool LoRaCommunication::sendCommand(uint8_t buoyId, const Command& cmd) {
     }
     
     // Create LoRa COMMAND packet
+    // 0x08 COMMAND_BUOY_STATUS : meme charge utile que 0x03, mais la bouee
+    // repond par un BuoyStatusPacketLora (58 o, x1) au lieu de l'ACK v1
+    // (18 o, x2). Le type de la requete fixe le format de la reponse
+    // (LORA_PROTOCOL.md §3.1) ; la bouee n'a aucun mode a configurer.
+    // Exige un firmware bouee >= 1.2.0 : une bouee plus ancienne ignore 0x08.
     CommandPacketLora packet;
-    packet.messageType = LoRaMessageType::COMMAND;
+    packet.messageType = LoRaMessageType::COMMAND_BUOY_STATUS;
     packet.targetBuoyId = buoyId;
     packet.command = cmd.type;
     packet.timestamp = millis();
@@ -1117,8 +1035,12 @@ bool LoRaCommunication::sendCommand(uint8_t buoyId, const Command& cmd) {
     bool sent = sendCommandPacket(packet);
     
     if (sent) {
-        // Add to pending commands queue (except for heartbeat)
-        if (cmd.type != CMD_HEARTBEAT) {
+        // Add to pending commands queue — sauf heartbeat et demandes de trame
+        // OBSERVABLE*, dont la réponse ne porte pas d'acquittement (pas de
+        // lastCmdTimestamp) : les mettre en file produirait 3 réémissions et un
+        // « timeout » rouge sur une demande pourtant servie.
+        if (cmd.type != CMD_HEARTBEAT && cmd.type != CMD_POLL &&
+            cmd.type != CMD_OBSERVABLE && cmd.type != CMD_OBSERVABLE2 && cmd.type != CMD_OBSERVABLE_GPS) {
             if (addPendingCommand(packet)) {
                 Logger::logf("✓ LoRa: Commande ajoutée à la queue (en attente d'ACK)");
                 // Notifier le display : commande envoyée (Bleu)
@@ -1310,6 +1232,10 @@ static BuoyState convertLoraToState(const BuoyStateLora& loraState) {
     state.distanceToCons = loraState.distanceToCons;
     state.autoPilotThrottleCmde = loraState.autoPilotThrottleCmde;
     state.autoPilotTrueHeadingCmde = loraState.autoPilotTrueHeadingCmde;
+    state.latitude = loraState.latitude;
+    state.longitude = loraState.longitude;
+    state.sequenceNumber = 0;
+    state.ttl = 0;
     return state;
 }
 
@@ -1428,32 +1354,133 @@ bool LoRaCommunication::addPendingCommand(const CommandPacketLora& command) {
 }
 
 /**
- * @brief Process ACK packet enriched with buoy state
+ * @brief Acquitte la commande en attente correspondant a (bouee, timestamp, code)
+ *
+ * Commun aux deux protocoles : l'ACK v1 porte (commandTimestamp, commandType),
+ * le BUOY_STATUS v2 porte (lastCmdTimestamp, lastCmdCode).
+ */
+bool LoRaCommunication::acknowledgePending(uint8_t buoyId, uint32_t commandTimestamp, uint8_t commandCode) {
+    for (int i = 0; i < MAX_PENDING_COMMANDS; i++) {
+        if (!pendingCommands[i].ackReceived &&
+            pendingCommands[i].command.targetBuoyId == buoyId &&
+            pendingCommands[i].command.timestamp == commandTimestamp &&
+            (uint8_t)pendingCommands[i].command.command == commandCode) {
+
+            // Mark as acknowledged
+            pendingCommands[i].ackReceived = true;
+            pendingCommandCount--;
+
+            Logger::logf("   ✓ Commande confirmée (retry=%d)", pendingCommands[i].retryCount);
+
+            // Notifier le display : ACK reçu (Vert)
+            if (displayManager != nullptr) {
+                displayManager->setCommandStatus(CommandStatus::ACK_RECEIVED);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Process BUOY_STATUS (protocole v2) — GATEWAY_DESIGN.md §3.3
+ */
+void LoRaCommunication::processBuoyStatus(const BuoyStatusPacketLora& status) {
+    using namespace LoRaCodec;
+
+    uint8_t buoyId = nibbleLo(status.buoyIds);   // filtrer sur le quartet BAS, jamais l'octet entier
+
+    Logger::logf("✅ BUOY_STATUS reçu de Bouée #%d, acquitte commande type=%d (ts=%lu)",
+                 buoyId, status.lastCmdCode, status.lastCmdTimestamp);
+
+    // Acquittement implicite : la trame porte la derniere commande acceptee.
+    // Un poll / heartbeat ne correspond a aucune commande en attente — normal.
+    acknowledgePending(buoyId, status.lastCmdTimestamp, status.lastCmdCode);
+
+    if (buoyId >= MAX_BUOYS) {
+        Logger::logf("   ⚠️  BUOY_STATUS de Bouée #%d hors limites", buoyId);
+        return;
+    }
+
+    int8_t index = addOrUpdateBuoy(buoyId);
+    if (index < 0) {
+        Logger::logf("   ⚠️  Impossible d'enregistrer Bouée #%d", buoyId);
+        return;
+    }
+
+    BuoyStateLora& state = buoys[index].lastState;
+    state.buoyId = buoyId;
+    state.preparedBuoyId = nibbleHi(status.buoyIds);
+    state.timestamp = millis();
+    state.generalMode = (tEtatsGeneral)nibbleLo(status.modes);
+    state.navigationMode = (tEtatsNav)nibbleHi(status.modes);
+    state.monitoringStatus = status.monitoringStatus;
+    state.sensorsValidities = status.sensorsValidities;
+    state.gpsOk = hasBit(status.sensorsValidities, SensorsValidityBit::GPS_OK);
+    state.headingOk = hasBit(status.sensorsValidities, SensorsValidityBit::HEADING_OK);
+    state.yawRateOk = hasBit(status.sensorsValidities, SensorsValidityBit::YAWRATE_OK);
+    state.latitude = state.gpsOk ? decodeDeg1e7(status.latGps) : 0.0;
+    state.longitude = state.gpsOk ? decodeDeg1e7(status.lonGps) : 0.0;
+    state.trueHeading = fromBam(status.trueHeading);
+    state.distanceToCons = (uint8_t)((status.distanceToCons / 10 > 255) ? 255 : status.distanceToCons / 10);  // m, sature (champ v1)
+    state.autoPilotThrottleCmde = status.autoPilotThrottleCmde;
+    state.autoPilotRudderCmde = status.autoPilotRudderCmde;
+    state.autoPilotTrueHeadingCmde = (int16_t)lroundf(fromBam(status.autoPilotTrueHeadingCmde));
+    // Temperature et batterie ne sont pas dans la trame rapide : elles viennent
+    // de la trame OBSERVABLE, demandee toutes les 30 s (main.cpp), et gardent
+    // ici leur derniere valeur connue.
+
+    buoys[index].lastUpdateTime = millis();
+    buoys[index].lastRssi = lastRssi;
+    newDataAvailable = true;
+
+    Logger::logf("   ✓ État Bouée #%d mis à jour depuis BUOY_STATUS (genMode=%d, navMode=%d, hdg=%.0f, throttle=%d, dist=%u dm)",
+                 buoyId, state.generalMode, state.navigationMode, state.trueHeading,
+                 state.autoPilotThrottleCmde, status.distanceToCons);
+}
+
+/**
+ * @brief Process OBSERVABLE (protocole v2) — GATEWAY_DESIGN.md §3.4
+ */
+void LoRaCommunication::processObservable(const ObservablePacketLora& obs) {
+    using namespace LoRaCodec;
+
+    if (obs.buoyId >= MAX_BUOYS) {
+        Logger::logf("   ⚠️  OBSERVABLE de Bouée #%d hors limites", obs.buoyId);
+        return;
+    }
+    int8_t index = addOrUpdateBuoy(obs.buoyId);
+    if (index < 0) {
+        return;
+    }
+
+    BuoyStateLora& state = buoys[index].lastState;
+    state.buoyId = obs.buoyId;
+    state.temperature = (uint8_t)((obs.temperature < 0) ? 0 : obs.temperature);  // champ v1 non signé
+    state.remainingCapacity = obs.remainingCapacity;
+    state.courseGps = fromBam(obs.courseGps);
+    state.speedGps = obs.speedGps / 100.0f;
+    state.nbSat = obs.nbSat;
+    state.lastObservableTime = millis();
+
+    buoys[index].lastUpdateTime = millis();
+    buoys[index].lastRssi = lastRssi;
+    newDataAvailable = true;
+
+    Logger::logf("   ✓ Bouée #%d : temp=%d °C, batterie=%u %%, sat=%u, SOG=%.2f m/s, COG=%.0f°, pertes DL %u/%u",
+                 obs.buoyId, obs.temperature, obs.remainingCapacity, obs.nbSat,
+                 state.speedGps, state.courseGps,
+                 obs.partialDlToBuoyLossNumber, obs.totalDlToBuoyLossNumber);
+}
+
+/**
+ * @brief Process ACK packet enriched with buoy state (protocole v1)
  */
 void LoRaCommunication::processAck(const AckWithStatePacketLora& ack) {
     Logger::logf("✅ ACK+State reçu de Bouée #%d pour commande type=%d (ts=%lu)", 
                  ack.buoyId, ack.commandType, ack.commandTimestamp);
     
-    // Find matching pending command
-    for (int i = 0; i < MAX_PENDING_COMMANDS; i++) {
-        if (!pendingCommands[i].ackReceived &&
-            pendingCommands[i].command.targetBuoyId == ack.buoyId &&
-            pendingCommands[i].command.timestamp == ack.commandTimestamp &&
-            pendingCommands[i].command.command == ack.commandType) {
-            
-            // Mark as acknowledged
-            pendingCommands[i].ackReceived = true;
-            pendingCommandCount--;
-            
-            Logger::logf("   ✓ Commande confirmée (retry=%d)", pendingCommands[i].retryCount);
-            
-            // Notifier le display : ACK reçu (Vert)
-            if (displayManager != nullptr) {
-                displayManager->setCommandStatus(CommandStatus::ACK_RECEIVED);
-            }
-            break;
-        }
-    }
+    acknowledgePending(ack.buoyId, ack.commandTimestamp, (uint8_t)ack.commandType);
     
     // Update BuoyStateLora from ACK data - immediate display refresh
     if (ack.buoyId >= MAX_BUOYS) {

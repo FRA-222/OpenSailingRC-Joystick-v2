@@ -41,7 +41,41 @@ enum BuoyCommand : uint8_t {
     CMD_HOME_VALIDATION,      ///< Validate Home position
     CMD_HEARTBEAT,            ///< Heartbeat to keep connection alive
     CMD_MAINTENANCE_ENTER,    ///< Enter MAINTENANCE mode (maps to dashboard code "4")
-    CMD_MAINTENANCE_EXIT      ///< Exit MAINTENANCE mode, return to READY (maps to dashboard code "5")
+    CMD_MAINTENANCE_EXIT,     ///< Exit MAINTENANCE mode, return to READY (maps to dashboard code "5")
+
+    // ── Passerelle / dashboard (GATEWAY_DESIGN.md §3.2, LORA_PROTOCOL.md §5.2) ──
+    // Allocation partagée bouée / joystick / passerelle : ne jamais réordonner.
+    CMD_POLL = 13,                    ///< Demande d'état + battement de cœur (no-op navigation)
+    CMD_OBSERVABLE = 14,              ///< Demande de trame OBSERVABLE
+    CMD_SET_HOME = 15,                ///< Home à la position transmise (trame COMMAND_POS)
+    CMD_SET_TARGET = 16,              ///< Cible à la position transmise (trame COMMAND_POS)
+    CMD_SET_DEGT = 17,                ///< Point de dégagement à la position transmise (trame COMMAND_POS)
+    CMD_OBSERVABLE2 = 18,             ///< Demande de trame OBSERVABLE2 (gains PID, moteurs)
+    CMD_OBSERVABLE_GPS = 19,          ///< Demande de trame OBSERVABLE_GPS (dérive GPS)
+    CMD_SERVICE_LIFE_INCREASE = 20,   ///< Durée de service +½ h (code dashboard "L")
+    CMD_SERVICE_LIFE_DECREASE = 21,   ///< Durée de service −½ h (code "M")
+    CMD_CURRENT_BUOY_INCREASE = 22,   ///< Identité préparée +1 (code "1") — jamais en diffusion
+    CMD_CURRENT_BUOY_DECREASE = 23,   ///< Identité préparée −1 (code "2") — jamais en diffusion
+    CMD_CURRENT_BUOY_VALIDATION = 24, ///< Valider l'identité préparée (code "3") — jamais en diffusion
+    CMD_BATTERY_LIPO = 25,            ///< Batterie LiPo (code "I")
+    CMD_BATTERY_LIFE = 26,            ///< Batterie LiFe (code "J")
+    CMD_CALIBRATION = 27,             ///< Calibration magnétomètre (code "F") — jamais en diffusion
+    CMD_NAV_BASIC = 28,               ///< Navigation basique (code "04Z")
+    CMD_NAV_TARGET = 29,              ///< Navigation vers la cible (code "06Z")
+    CMD_TEST_GPS_KO_ON = 30,          ///< Essai : GPS KO (code "71Z")
+    CMD_TEST_GPS_KO_OFF = 31,         ///< (code "70Z")
+    CMD_TEST_DL_TOTAL_KO_ON = 32,     ///< Essai : datalink total KO (code "D1Z")
+    CMD_TEST_DL_TOTAL_KO_OFF = 33,    ///< (code "D0Z")
+    CMD_TEST_DL_PARTIAL_KO_ON = 34,   ///< Essai : datalink partiel KO (code "G1Z")
+    CMD_TEST_DL_PARTIAL_KO_OFF = 35,  ///< (code "G0Z")
+    CMD_TEST_YAWRATE_KO_ON = 36,      ///< Essai : lacet KO (code "91Z")
+    CMD_TEST_YAWRATE_KO_OFF = 37,     ///< (code "90Z")
+    CMD_TEST_MAG_KO_ON = 38,          ///< Essai : magnétomètre KO (code "81Z")
+    CMD_TEST_MAG_KO_OFF = 39,         ///< (code "80Z")
+    CMD_TEST_AUTOPILOT_ON = 40,       ///< Essai : pilote automatique (code "H1Z")
+    CMD_TEST_AUTOPILOT_OFF = 41,      ///< (code "H0Z")
+    CMD_MONITORING_HEADING_ERROR_ON = 42,  ///< Surveillance de l'écart de cap (code "K1Z")
+    CMD_MONITORING_HEADING_ERROR_OFF = 43  ///< (code "K0Z")
 };
 
 /**
@@ -210,6 +244,16 @@ public:
      * @return true if command was sent successfully
      */
     bool generateHeartbeatCommand(uint8_t targetBuoyId);
+
+    /**
+     * @brief Demande la trame OBSERVABLE (température, batterie, route, vitesse…) à une bouée
+     *
+     * Protocole LoRa v2 uniquement : la bouée répond par un ObservablePacketLora
+     * (11 o) au lieu du BUOY_STATUS. Sans effet sur la navigation, jamais acquittée.
+     * @param targetBuoyId ID of the buoy to query
+     * @return true if command was sent successfully
+     */
+    bool generateObservableCommand(uint8_t targetBuoyId);
 
 private:
     ICommunication& comm;  ///< Reference to communication interface

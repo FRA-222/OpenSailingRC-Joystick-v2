@@ -22,6 +22,26 @@
  */
 
 #include "Logger.h"
+#include "JoystickConfiguration.h"
+
+// Port série de trace : USB CDC natif sur l'AtomS3 (v1), UART0 sur le Core2 (v2)
+//
+// ⚠️ AtomS3 sans hôte USB (alimentation par le connecteur du bas + switch) :
+// HWCDC::flush() boucle tant que le tampon d'émission n'est pas vidé, et
+// sans PC personne ne le vide — le firmware restait bloqué dès la première
+// trace, d'où l'ancien contournement « mettre USBSerial en commentaire ».
+// Deux mesures, uniquement pour ce port :
+//   1. jamais de flush() ;
+//   2. setTxTimeoutMs(0) : quand le tampon est plein (hôte absent), write()
+//      abandonne immédiatement au lieu d'attendre 100 ms par ligne.
+// Les traces sont perdues sans PC, ce qui est le comportement voulu.
+#if JOYSTICK_HW == 1
+#define LOG_SERIAL USBSerial
+#define LOG_FLUSH() do {} while (0)
+#else
+#define LOG_SERIAL Serial
+#define LOG_FLUSH() LOG_SERIAL.flush()
+#endif
 #include <stdarg.h>
 
 // Initialisation des variables statiques
@@ -43,7 +63,10 @@ void Logger::init(bool serialEnabled, bool lcdEnabled) {
     textSize = 1;
 
     if (enableSerialOutput) {
-        Serial.begin(115200);
+        LOG_SERIAL.begin(115200);
+#if JOYSTICK_HW == 1
+        LOG_SERIAL.setTxTimeoutMs(0);   // hôte USB absent : ne jamais bloquer
+#endif
         delay(50);  // Attente stabilisation UART
     }
 
@@ -65,13 +88,13 @@ void Logger::init(bool serialEnabled, bool lcdEnabled) {
  * @param message Message sous forme de chaîne de caractères à enregistrer
  * 
  * @note L'écran LCD est effacé et le curseur réinitialisé après MAX_LCD_LINES lignes
- * @note Utilise Serial pour la sortie série sur Core2
+ * @note Utilise LOG_SERIAL : USBSerial sur AtomS3 (v1), Serial sur Core2 (v2)
  */
 void Logger::log(const String& message) {
     // Sortie sur le port série si activée
     if (enableSerialOutput) {
-        Serial.println(message);
-        Serial.flush();
+        LOG_SERIAL.println(message);
+        LOG_FLUSH();
     }
     
     // Sortie sur l'écran LCD si activée
@@ -121,8 +144,8 @@ void Logger::logf(const char* format, ...) {
 void Logger::print(const String& message) {
     // Sortie sur le port série si activée
     if (enableSerialOutput) {
-        Serial.print(message);
-        Serial.flush();
+        LOG_SERIAL.print(message);
+        LOG_FLUSH();
     }
     
     // Sortie sur l'écran LCD si activée

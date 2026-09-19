@@ -5,6 +5,33 @@
 [![Hardware: M5Stack Core2](https://img.shields.io/badge/Hardware-M5Stack%20Core2-orange.svg)](https://docs.m5stack.com/en/core/core2)
 [![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen.svg)](https://github.com/FRA-222/OpenSailingRC-Joystick-v2/releases)
 
+## 🧩 Deux matériels, un seul code (v2.3.0)
+
+Le firmware sert désormais **les deux joysticks** ; le projet `OpenSailingRC-BuoyJoystick`
+(v1) n'a plus à être maintenu séparément. Le matériel est choisi par l'environnement
+PlatformIO, tout le reste de la configuration est dans `include/JoystickConfiguration.h`
+(pendant de `BuoyConfiguration` côté bouée) :
+
+| Environnement | Carte | Entrées | Écran | Flag |
+|---|---|---|---|---|
+| `joystick-v2-core2` *(défaut)* | M5Stack Core2 + ExtPort | 2 Unit Joystick, ByteButton (sélection directe des 8 bouées), Dual Button | 320×240 | `JOYSTICK_HW=2` |
+| `joystick-v1-atoms3` | M5Stack AtomS3 + carte STM32 | 2 sticks 12 bits, 4 boutons, 2 tensions batterie, bouton d'écran (bouée suivante) | 128×128 | `JOYSTICK_HW=1` |
+
+```bash
+pio run -e joystick-v2-core2 --target upload     # Core2
+pio run -e joystick-v1-atoms3 --target upload    # AtomS3 (ex-BuoyJoystick)
+```
+
+Ce qui dépend du matériel est isolé : `include/HardwareConfig.h` (brochage, adresses I2C,
+pins LoRa, taille d'écran, correspondance bouton → action), `src/JoystickManagerV1.cpp` /
+`V2.cpp` (entrées), `src/DisplayManagerV1.cpp` / `V2.cpp` (affichage) et le port série du
+`Logger`. Protocole LoRa v2 (`LoRaProtocol.h`, `BUOY_STATUS` 58 o, `OBSERVABLE` 11 o),
+gestion des bouées, commandes et ESP-NOW sont communs et identiques sur les deux matériels.
+
+Dans `JoystickConfiguration.h` : `COMM_MODE` (ESP-NOW / LoRa 920 / LoRa 433),
+`LORA_AIR_RATE`, `JOYSTICK_ESPNOW_PASSIVE`, `DEBUG_JOYSTICK_RAW`, `DEBUG_SYSTEM_STATE`,
+`JOYSTICK_FIRMWARE_VERSION`. Ces réglages doivent correspondre à ceux de la bouée.
+
 ## ✅ État d'Avancement
 
 ### Modules Implémentés

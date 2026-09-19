@@ -4,7 +4,9 @@
  * @author Philippe Hubert
  * @date 2025
  * 
- * Ossature avec communication ESP-NOW ou LoRa bidirectionnelle et affichage LCD
+ * Ossature avec communication ESP-NOW ou LoRa bidirectionnelle et affichage LCD.
+ * Un seul code pour les deux matériels (v1 AtomS3, v2 Core2) : voir
+ * JoystickConfiguration.h et HardwareConfig.h.
  */
 
 /*
@@ -19,6 +21,7 @@
 #include <M5Unified.h>
 #include "Logger.h"
 #include "HardwareConfig.h"
+#include "JoystickConfiguration.h"
 #include "JoystickManager.h"
 #include "CommunicationConfig.h"
 #include "ESPNowCommunication.h"
@@ -28,78 +31,14 @@
 #include "CommandManager.h"
 
 // ============================================================================
-// CONFIGURATION - MODE DE COMMUNICATION
+// CONFIGURATION
 // ============================================================================
-// Changer le mode de communication ici :
-// - CommMode::ESP_NOW  : Communication ESP-NOW (2.4 GHz, courte portée, rapide)
-// - CommMode::LORA_920 : LoRa module E220-900T22S(JP) 920 MHz (longue portée, lente)
-// - CommMode::LORA_433 : LoRa module E220-400T22S 433 MHz (idem, autre bande)
+// Matériel (v1 AtomS3 / v2 Core2), mode de communication, bande et débit air
+// LoRa, écoute passive ESP-NOW, traces de mise au point : TOUT est dans
+// include/JoystickConfiguration.h (le matériel est fixé par l'environnement
+// PlatformIO, le reste s'y édite). Rien à régler dans ce fichier.
 //
-// Les deux bandes LoRa partagent tout le protocole : le code commun se teste
-// avec CommunicationConfig::isLoRa(COMM_MODE), et seule la configuration radio
-// (canal, débit air, puissance) dépend de la bande. La fréquence n'étant pas
-// détectable par logiciel, elle doit correspondre au module physiquement
-// branché — et au réglage de la bouée. Comme pour le 920, le module 433 se
-// configure via son switch M0/M1 (ON = configuration, OFF = normal).
-#define COMM_MODE CommMode::LORA_433
-
-// ── Écoute passive ESP-NOW en mode LoRa ──────────────────────────────────────
-// 1 = comportement nominal : en mode LoRa, ESP-NOW est aussi initialisé pour
-//     recevoir les broadcasts d'état des bouées, plus rapides que le LoRa.
-// 0 = radio 2,4 GHz coupée. Le joystick ne reçoit plus que le LoRa.
-//
-// ⚠️ Ce n'est PAS un simple réglage de confort : c'est l'instrument d'un essai
-// de portée. Les deux radios cohabitent sur la même carte, et les bursts WiFi
-// tirent 250-350 mA en quelques centaines de µs — ce qui remonte le plancher de
-// bruit du récepteur 433 colocalisé (5 à 15 dB typiques) et peut détruire les
-// trames LoRa qui tombent au mauvais moment.
-//
-// La campagne de portée du 30/08/2026 a été faite avec ESP-NOW ACTIF des deux
-// côtés, et le motif en salves des pertes est compatible avec un battement
-// entre le broadcast ESP-NOW de la bouée (1 s) et le heartbeat LoRa (3 s).
-// Voir GATEWAY_DESIGN.md §5.3, « ESP-NOW et LoRa sur la même carte ».
-//
-// L'essai : mettre 0 ici, couper aussi le broadcast periodique cote bouee,
-// refaire le palier 110 m et comparer le TAUX DE RECEPTION affiche par le
-// bilan de liaison (pas le RSSI, qui ne bougera pas).
-#define JOYSTICK_ESPNOW_PASSIVE 0
-
-// Bande radio déduite du mode ci-dessus (utilisée par l'instance LoRa)
-constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
-                                   ? LoRaBand::BAND_433
-                                   : LoRaBand::BAND_920;
-
-// Débit air LoRa — DOIT être identique à LORA_AIR_RATE de la bouée
-// (BuoyConfiguration.cpp). Un désaccord ne produit aucune erreur, seulement un
-// silence total : vérifier la trace "Air data rate" au boot des deux côtés.
-//
-// Du plus lent au plus rapide : AIR_2400 / 4800 / 9600 / 19200 / 38400 / 62500.
-// Chaque cran divise ~par 2 le temps d'antenne et coûte ~3 dB de sensibilité.
-// SF5 est le plancher LoRa : il n'existe ni SF4 ni SF3.
-//
-// Essai de portée : commencer par AIR_62500 et descendre jusqu'à ce que la
-// liaison tienne à la distance visée, en relevant le RSSI à chaque palier.
-#define LORA_AIR_RATE LoRaAirRate::AIR_9600
-
-// Trace periodique des valeurs brutes du joystick droit (2 lignes/seconde).
-// Utile pour regler le centrage du stick, mais elle noie les bilans de liaison
-// pendant les essais de portee : laisser a 0 sur le terrain.
-#define DEBUG_JOYSTICK_RAW 0
-
-// Bloc "--- Etat systeme ---" toutes les 2 s (~9 lignes a chaque fois).
-// Utile en mise au point, mais il noie les bilans de liaison sur le terrain.
-#define DEBUG_SYSTEM_STATE 0
-
-// ============================================================================
-// CONFIGURATION - DÉCOUVERTE AUTOMATIQUE DES BOUÉES
-// ============================================================================
-// Les bouées sont maintenant découvertes automatiquement via leurs broadcasts.
-// Plus besoin de configurer manuellement les adresses MAC !
-
-// ============================================================================
-// VERSION FIRMWARE
-// ============================================================================
-constexpr const char* JOYSTICK_FIRMWARE_VERSION = "2.1.6";
+// Les bouées sont découvertes automatiquement via leurs broadcasts.
 
 // ============================================================================
 // INSTANCES DES MANAGERS
@@ -131,6 +70,13 @@ const uint32_t LOOP_INTERVAL = 100;  // 10Hz
 uint32_t lastHeartbeatTime = 0;
 const uint32_t HEARTBEAT_INTERVAL = 3000;  // 3 secondes
 
+// Demande périodique de la trame OBSERVABLE (LoRa v2) : température, batterie,
+// route et vitesse GPS ne sont plus dans la trame rapide BUOY_STATUS
+// (GATEWAY_DESIGN.md §3.4). Cadence lente : ces grandeurs bougent peu, et
+// chaque demande coûte un aller-retour radio (41 + 46 ms de temps d'antenne).
+uint32_t lastObservableTime = 0;
+const uint32_t OBSERVABLE_INTERVAL = 30000;  // 30 secondes
+
 // ============================================================================
 // TÂCHE FREERTOS POUR RÉCEPTION LORA
 // ============================================================================
@@ -139,7 +85,7 @@ TaskHandle_t loraRxTaskHandle = NULL;
 /**
  * @brief Tâche dédiée à la réception LoRa (Core 0)
  * Cette tâche s'exécute en parallèle du loop principal pour optimiser
- * la réception des RESPONSE sans ralentir l'envoi des commandes
+ * la réception des réponses bouée sans ralentir l'envoi des commandes
  */
 void loraRxTask(void* parameter) {
     Logger::log("# Tâche LoRa RX démarrée sur Core 0");
@@ -156,7 +102,7 @@ void loraRxTask(void* parameter) {
 // SETUP
 // ============================================================================
 void setup() {
-    // M5Stack Core2 initialization (doit être fait en premier)
+    // Initialisation M5 (AtomS3 ou Core2, doit être faite en premier)
     auto cfg = M5.config();
     M5.begin(cfg);
     
@@ -176,8 +122,11 @@ void setup() {
     Logger::log("*** TEST SERIAL ***");
     Logger::log();
     Logger::log("===========================================");
-    Logger::log("  OpenSailingRC - Joystick v2 (Core2)");
+    Logger::logf("  OpenSailingRC - %s (%s) v%s", JoystickConfiguration::productName(),
+                 JoystickConfiguration::hardwareName(), JOYSTICK_FIRMWARE_VERSION);
     Logger::log("===========================================");
+    Logger::log();
+    JoystickConfiguration::logSummary();
     Logger::log();
 
     // 0. Sélection du mode de communication et des managers associés
@@ -201,8 +150,7 @@ void setup() {
     Logger::log("1. Initialisation Joystick...");
     if (!joystick.begin()) {
         Logger::log("   -> ERREUR: Echec initialisation joystick");
-        Logger::log("   -> Verifiez: JS gauche sur Port A (SDA=32, SCL=33)");
-        Logger::log("   -> Verifiez: JS droit + ByteButton chaines sur Port C (SDA=14, SCL=13)");
+        Logger::logf("   -> Verifiez: %s", JoystickConfiguration::wiringHint());
         // On continue quand même pour tester ESP-NOW
     } else {
         Logger::log("   -> Joystick: OK");
@@ -243,7 +191,7 @@ void setup() {
             Logger::log("   -> ESP-NOW passif: OK (réception broadcasts bouées)");
         }
 #else
-        // Radio 2,4 GHz coupée — voir JOYSTICK_ESPNOW_PASSIVE en tête de fichier.
+        // Radio 2,4 GHz coupée — voir JOYSTICK_ESPNOW_PASSIVE dans JoystickConfiguration.h.
         // WiFi.mode(WIFI_OFF) est explicite plutôt qu'implicite : ne pas appeler
         // espNow.begin() suffirait à ne pas allumer la radio, mais le dire
         // fermement garantit l'etat mesure, et c'est ce qui compte pour un essai.
@@ -284,7 +232,7 @@ void setup() {
 
     // 5b. Diagnostic hardware détaillé affiché sur l'écran de boot
     Logger::log();
-    // Allume la LED verte du ByteButton correspondant à la bouée sélectionnée
+    // Allume la LED verte du ByteButton correspondant à la bouée sélectionnée (v2 ; neutre en v1)
     joystick.setBuoySelectionLed(buoyState->getSelectedBuoyId());
 
     Logger::log("5b. Diagnostic hardware...");
@@ -295,7 +243,7 @@ void setup() {
     Logger::log();
     Logger::log("===========================================");
     Logger::log("  SYSTEM READY");
-    Logger::log("  Mode simplifié: COMMAND + RESPONSE");
+    Logger::log("  Mode: COMMAND_BUOY_STATUS → BUOY_STATUS");
     Logger::log("===========================================");
     Logger::log();
     
@@ -339,8 +287,8 @@ void loop() {
     // ========================================================================
     joystick.update();
     
-    // ByteButton : sélection directe de la bouée, de gauche à droite
-    // (touche la plus à gauche -> bouée #1, la plus à droite -> bouée #8)
+    // ByteButton (v2 uniquement ; renvoie toujours -1 en v1) : sélection directe
+    // de la bouée, de gauche à droite (touche la plus à gauche -> bouée #1)
     int8_t byteBtnIdx = joystick.getByteButtonPressedIndex();
     if (byteBtnIdx >= 0) {
         Logger::logf("\n[BYTE-BTN] Touche %d pressee - Selection Bouee #%d", byteBtnIdx + 1, byteBtnIdx);
@@ -349,24 +297,27 @@ void loop() {
         display->displayBuoySelection();
     }
 
-    // DualButton GAUCHE (rouge) : Validation HOME -> passage en NAV
-    if (joystick.wasButtonPressed(BTN_LEFT)) {
+    // Les boutons physiques différent entre v1 et v2 : la correspondance
+    // bouton -> action (BTN_ACTION_*) et les libellés sont dans HardwareConfig.h.
+
+    // Validation HOME -> passage en NAV
+    if (joystick.wasButtonPressed(BTN_ACTION_HOME_VALIDATION)) {
         uint8_t activeBuoy = buoyState->getSelectedBuoyId();
-        Logger::logf("\n[DUAL-L] Bouton DualButton GAUCHE (rouge) presse - Envoi HOME_VALIDATION a Bouee #%d", activeBuoy);
+        Logger::logf("\n%s presse - Envoi HOME_VALIDATION a Bouee #%d", BTN_LABEL_HOME_VALIDATION, activeBuoy);
         cmdManager->generateHomeValidationCommand(activeBuoy);
     }
 
-    // DualButton DROIT (bleu) : Initialisation du HOME
-    if (joystick.wasButtonPressed(BTN_RIGHT)) {
+    // Initialisation du HOME à la position courante
+    if (joystick.wasButtonPressed(BTN_ACTION_INIT_HOME)) {
         uint8_t selectedId = buoyState->getSelectedBuoyId();
-        Logger::logf("\n[DUAL-R] Bouton DualButton DROIT (bleu) presse - Envoi CMD_INIT_HOME a Bouee #%d", selectedId);
+        Logger::logf("\n%s presse - Envoi CMD_INIT_HOME a Bouee #%d", BTN_LABEL_INIT_HOME, selectedId);
         cmdManager->generateInitHomeCommand(selectedId);
     }
 
-    // Bouton d'appui du stick GAUCHE : CMD_NAV_HOLD
-    if (joystick.wasButtonPressed(BTN_LEFT_STICK)) {
+    // CMD_NAV_HOLD
+    if (joystick.wasButtonPressed(BTN_ACTION_NAV_HOLD)) {
         uint8_t selectedId = buoyState->getSelectedBuoyId();
-        Logger::logf("\n[JS-L] Bouton stick joystick GAUCHE presse - NAV_HOLD (Bouee #%d)", selectedId);
+        Logger::logf("\n%s presse - NAV_HOLD (Bouee #%d)", BTN_LABEL_NAV_HOLD, selectedId);
         cmdManager->generateNavHoldCommand(selectedId);
     }
 
@@ -442,7 +393,7 @@ void loop() {
     // ========================================================================
 
     // --- DEBUG : log périodique des valeurs brutes du joystick droit ---
-    // Activer avec DEBUG_JOYSTICK_RAW (en tete de fichier) pour regler le
+    // Activer avec DEBUG_JOYSTICK_RAW (JoystickConfiguration.h) pour regler le
     // centrage du stick ; a laisser desactive pendant les essais de portee.
 #if DEBUG_JOYSTICK_RAW
     static uint32_t lastJsDebugTime = 0;
@@ -465,7 +416,9 @@ void loop() {
     static bool rightLeftProcessed = false;
     
     int16_t rightY = joystick.getAxisCentered(AXIS_RIGHT_Y);
-    int16_t rightX = joystick.getAxisCentered(AXIS_RIGHT_X);
+    // Sens de l'axe X normalisé par matériel (RIGHT_STICK_X_SIGN, HardwareConfig.h) :
+    // après correction, pousser à DROITE donne toujours une valeur POSITIVE.
+    int16_t rightX = (int16_t)(RIGHT_STICK_X_SIGN * joystick.getAxisCentered(AXIS_RIGHT_X));
     
     // Récupération de l'état actuel de la bouée pour incrémenter les valeurs
     uint8_t selectedId = buoyState->getSelectedBuoyId();
@@ -496,41 +449,40 @@ void loop() {
     }
 
     // Joystick DROIT vers la DROITE : CMD_HEADING_INCREASE
-    // (l'axe X du stick droit est inverse : pousser a droite donne rightX negatif)
-    if (rightX < -JOYSTICK_THRESHOLD && !rightRightProcessed)
+    if (rightX > JOYSTICK_THRESHOLD && !rightRightProcessed)
     {
         Logger::logf("\n[JS-R] Joystick DROIT vers la DROITE - HEADING_INCREASE (Bouee #%d)", selectedId);
         cmdManager->generateHeadingIncreaseCommand(selectedId);
         rightRightProcessed = true;
     }
-    else if (rightX > -JOYSTICK_THRESHOLD / 2)
+    else if (rightX < JOYSTICK_THRESHOLD / 2)
     {
         rightRightProcessed = false; // Reset
     }
 
     // Joystick DROIT vers la GAUCHE : CMD_HEADING_DECREASE
-    if (rightX > JOYSTICK_THRESHOLD && !rightLeftProcessed)
+    if (rightX < -JOYSTICK_THRESHOLD && !rightLeftProcessed)
     {
         Logger::logf("\n[JS-R] Joystick DROIT vers la GAUCHE - HEADING_DECREASE (Bouee #%d)", selectedId);
         cmdManager->generateHeadingDecreaseCommand(selectedId);
         rightLeftProcessed = true;
     }
-    else if (rightX < JOYSTICK_THRESHOLD / 2)
+    else if (rightX > -JOYSTICK_THRESHOLD / 2)
     {
         rightLeftProcessed = false; // Reset
     }
 
-    // Bouton d'appui du stick DROIT : CMD_NAV_STOP
-    if (joystick.wasButtonPressed(BTN_RIGHT_STICK))
+    // CMD_NAV_STOP
+    if (joystick.wasButtonPressed(BTN_ACTION_NAV_STOP))
     {
-        Logger::logf("\n[JS-R] Bouton stick joystick DROIT presse - NAV_STOP (Bouee #%d)", selectedId);
+        Logger::logf("\n%s presse - NAV_STOP (Bouee #%d)", BTN_LABEL_NAV_STOP, selectedId);
         cmdManager->generateNavStopCommand(selectedId);
     }
 
-    // Lecture du bouton A Core2
+    // Bouton A de l'appareil (écran AtomS3 en v1, BtnA Core2 en v2) : bouée suivante
     if (joystick.wasAtomScreenPressed())
     {
-        Logger::log("\n[BTN-A] Bouton A Core2 presse");
+        Logger::log("\n[BTN-A] Bouton A presse - bouee suivante");
         buoyState->selectNextBuoy();
         joystick.setBuoySelectionLed(buoyState->getSelectedBuoyId());
         display->displayBuoySelection();
@@ -568,6 +520,20 @@ void loop() {
         cmdManager->generateHeartbeatCommand(selectedId);
         Logger::logf("💓 Heartbeat envoyé à Bouée #%d", selectedId);
     } 
+
+    // ========================================================================
+    // 3 bis. DEMANDE LENTE DE LA TRAME OBSERVABLE (LoRa uniquement)
+    // ========================================================================
+    // Décalée d'une demi-période par rapport au heartbeat pour ne pas enchaîner
+    // deux émissions dans la même seconde.
+    if (CommunicationConfig::isLoRa(COMM_MODE) &&
+        currentTime - lastObservableTime >= OBSERVABLE_INTERVAL &&
+        currentTime - lastHeartbeatTime >= HEARTBEAT_INTERVAL / 2) {
+        lastObservableTime = currentTime;
+        uint8_t selectedId = buoyState->getSelectedBuoyId();
+        cmdManager->generateObservableCommand(selectedId);
+        Logger::logf("🌡️  Demande OBSERVABLE envoyée à Bouée #%d", selectedId);
+    }
     
     // ========================================================================
     // 4. MISE À JOUR AFFICHAGE
@@ -594,10 +560,12 @@ void loop() {
         Logger::logf("Batteries: %.2fV / %.2fV",
                      joystick.getBattery1Voltage(),
                      joystick.getBattery2Voltage());
+#if JOYSTICK_HW == 2
         Logger::logf("DualBtn: GPIO%d=%d GPIO%d=%d | ByteBtn mask=0x%02X",
                      DUAL_BUTTON_1_GPIO, digitalRead(DUAL_BUTTON_1_GPIO),
                      DUAL_BUTTON_2_GPIO, digitalRead(DUAL_BUTTON_2_GPIO),
                      joystick.getByteButtonMask());
+#endif
         
         // Bouées - Affichage simplifié
         uint8_t selectedId = buoyState->getSelectedBuoyId();

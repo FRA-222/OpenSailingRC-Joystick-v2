@@ -23,18 +23,13 @@
 #include <M5_LoRa_E220_JP.h>
 #include "CommandManager.h"
 #include "ICommunication.h"
+#include "HardwareConfig.h"   // LORA_RX_PIN / LORA_TX_PIN selon le matériel
+#include "LoRaProtocol.h"   // trames partagées bouée / joystick / passerelle (copie littérale)
 
 // Forward declaration
 class DisplayManager;
 
-// LoRa E220-JP module uses UART communication
-// Configuration pour M5Stack Core2 + Unit LoRaE220-920 sur PORT B
-// (ExtPort For Core2 ou base M5GO : jaune=G26, blanc=G36)
-//
-// Unit LoRaE220-920 : UART_RX (jaune), UART_TX (blanc)
-// Avec un câble Grove droit :
-//   Core2 TX (G26, jaune) → LoRa RX
-//   Core2 RX (G36, blanc) ← LoRa TX   (G36 est entrée-seule : RX uniquement)
+// LoRa E220 module uses UART communication (Serial2), brochage dans HardwareConfig.h.
 //
 // IMPORTANT: M0/M1 pins sur le module M5Stack LoRa E220-JP
 // sont contrôlées par un SWITCH sur le module:
@@ -51,14 +46,8 @@ class DisplayManager;
 //
 // #define LORA_USE_SOFTWARE_M0M1  // Décommentez si M0/M1 sont connectés aux GPIOs
 
-#define LORA_RX_PIN 36  // Core2 Port B blanc (reçoit du LoRa TX)
-#define LORA_TX_PIN 26  // Core2 Port B jaune (envoie vers LoRa RX)
-
-#ifdef LORA_USE_SOFTWARE_M0M1
-#define LORA_M0_PIN 7   // Mode control pin 0 (si connecté)
-#define LORA_M1_PIN 8   // Mode control pin 1 (si connecté)
-#define LORA_AUX_PIN 41 // Auxiliary pin (optionnel)
-#endif
+// Les pins UART (LORA_RX_PIN / LORA_TX_PIN) et M0/M1/AUX sont définies par
+// matériel dans HardwareConfig.h (v1 AtomS3 : G1/G2 ; v2 Core2 : Port B G36/G26).
 
 // Maximum number of manageable buoys
 #define MAX_BUOYS 8
@@ -159,10 +148,24 @@ enum class LoRaAirRate {
 
 /**
  * @brief Buoy state structure (received via LoRa)
+ *
+ * Stockage interne, en unités physiques, alimenté soit par l'ACK v1 (18 o),
+ * soit par le BuoyStatusPacketLora v2 (58 o, décodé par processBuoyStatus).
  */
 struct BuoyStateLora {
-    uint8_t buoyId;                     ///< Buoy ID (0-5)
+    uint8_t buoyId;                     ///< Buoy ID (0-7)
     uint32_t timestamp;                 ///< Message timestamp
+    uint8_t preparedBuoyId;             ///< v2 — identité en préparation
+    double latitude;                    ///< v2 — deg (0 si gpsOk faux)
+    double longitude;                   ///< v2 — deg
+    float trueHeading;                  ///< v2 — deg (BAM décodé)
+    int8_t autoPilotRudderCmde;         ///< v2 — %
+    uint8_t monitoringStatus;           ///< v2 — MonitoringStatusBit brut
+    uint8_t sensorsValidities;          ///< v2 — SensorsValidityBit brut
+    float courseGps;                    ///< v2 (OBSERVABLE) — deg
+    float speedGps;                     ///< v2 (OBSERVABLE) — m/s
+    uint8_t nbSat;                      ///< v2 (OBSERVABLE)
+    uint32_t lastObservableTime;        ///< v2 — millis() de la dernière OBSERVABLE reçue (0 = jamais)
     
     // General state
     tEtatsGeneral generalMode;          ///< General state (INIT, READY, MAINTENANCE, HOME_DEFINITION, NAV)
@@ -187,36 +190,7 @@ struct BuoyStateLora {
     int16_t autoPilotTrueHeadingCmde;    ///< Autopilot heading command in degrees (0-359)
 };
 
-/**
- * @brief Message types for LoRa protocol
- */
-enum class LoRaMessageType : uint8_t {
-    REQUEST = 0x01,    ///< Request buoy status (Joystick -> Buoy)
-    RESPONSE = 0x02,   ///< Response with buoy state (Buoy -> Joystick)
-    COMMAND = 0x03,    ///< Command to buoy (Joystick -> Buoy)
-    ACK = 0x04         ///< Acknowledgment (Buoy -> Joystick)
-};
-
-/**
- * @brief Request packet structure (Joystick -> Buoy)
- * Used to poll a specific buoy for its current state
- * IMPORTANT: Packed to avoid padding issues
- */
-struct __attribute__((packed)) RequestPacketLora {
-    LoRaMessageType messageType;  ///< Message type (REQUEST)
-    uint8_t targetBuoyId;         ///< Target buoy ID to poll
-    uint32_t timestamp;           ///< Request timestamp
-};
-
-/**
- * @brief Response packet structure (Buoy -> Joystick)
- * Contains the full buoy state as response to a REQUEST
- * IMPORTANT: Packed to avoid padding issues
- */
-struct __attribute__((packed)) ResponsePacketLora {
-    LoRaMessageType messageType;  ///< Message type (RESPONSE)
-    BuoyStateLora state;          ///< Complete buoy state
-};
+// LoRaMessageType est défini dans LoRaProtocol.h (copie littérale partagée).
 
 /**
  * @brief Command packet structure (sent via LoRa)
@@ -264,6 +238,9 @@ struct __attribute__((packed)) AckWithStatePacketLora {
     int8_t autoPilotThrottleCmde;       ///< Autopilot throttle command
     int16_t autoPilotTrueHeadingCmde;   ///< Autopilot heading command (0-359)
 };
+
+static_assert(sizeof(CommandPacketLora) == LORA_COMMAND_PACKET_SIZE, "CommandPacketLora doit faire 7 octets");
+static_assert(sizeof(AckWithStatePacketLora) == LORA_ACK_PACKET_SIZE, "AckWithStatePacketLora doit faire 18 octets");
 
 /**
  * @brief Pending command structure for retry mechanism
@@ -427,8 +404,8 @@ public:
     void removeInactiveBuoys(uint32_t timeoutMs) override;
     
     /**
-     * @brief Écoute passive des RESPONSE (non-bloquant)
-     * Les RESPONSE sont envoyées par les bouées après COMMAND ou heartbeat
+     * @brief Écoute passive des réponses bouée (non-bloquant)
+     * BUOY_STATUS (v2) ou ACK (v1), envoyés par les bouées après COMMAND ou heartbeat
      */
     void listenForResponses();
     
@@ -593,14 +570,6 @@ private:
     DisplayManager* displayManager;                  ///< Pointer to display manager for visual feedback
 
     /**
-     * @brief Poll a specific buoy for its state (Request/Response model)
-     * @param buoyId Buoy ID to poll
-     * @param timeoutMs Timeout to wait for response (default: 500ms)
-     * @return true if buoy responded, false if timeout
-     */
-    bool pollBuoy(uint8_t buoyId, uint32_t timeoutMs = 500);
-
-    /**
      * @brief Find a buoy by ID
      * @param buoyId Buoy ID
      * @return Index in array or -1 if not found
@@ -622,10 +591,33 @@ private:
     void processReceivedMessage(const uint8_t* data, size_t len);
     
     /**
-     * @brief Process received ACK (enriched with buoy state)
+     * @brief Process received ACK (enriched with buoy state) — protocole v1 (0x04)
      * @param ack ACK+State packet received
      */
     void processAck(const AckWithStatePacketLora& ack);
+
+    /**
+     * @brief Process received BUOY_STATUS — protocole v2 (0x05, 58 o)
+     *
+     * Décode BAM / quartets / bits (LoRaCodec), met à jour l'état mémorisé et
+     * acquitte la commande en attente via lastCmdTimestamp / lastCmdCode.
+     */
+    void processBuoyStatus(const BuoyStatusPacketLora& status);
+
+    /**
+     * @brief Process received OBSERVABLE — protocole v2 (0x06, 11 o)
+     *
+     * Réponse à CMD_OBSERVABLE : met à jour température, batterie, route et
+     * vitesse GPS de la bouée. N'acquitte rien (la trame ne porte pas de
+     * lastCmdTimestamp).
+     */
+    void processObservable(const ObservablePacketLora& obs);
+
+    /**
+     * @brief Marque acquittée la commande en attente qui correspond (bouée, timestamp, code)
+     * @return true si une commande en attente a été trouvée
+     */
+    bool acknowledgePending(uint8_t buoyId, uint32_t commandTimestamp, uint8_t commandCode);
     
     /**
      * @brief Add command to pending queue
