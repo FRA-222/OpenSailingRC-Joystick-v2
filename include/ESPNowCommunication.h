@@ -35,7 +35,7 @@ class DisplayManager;
  * @brief Command packet structure (sent)
  * Uses __attribute__((packed)) to ensure identical memory layout across all devices
  */
-struct __attribute__((packed)) CommandPacket {
+struct __attribute__((packed)) CommandPacketESPNow {
     uint8_t targetBuoyId;       ///< Target buoy ID
     BuoyCommand command;        ///< Command type
     uint32_t timestamp;         ///< Timestamp
@@ -47,7 +47,7 @@ struct __attribute__((packed)) CommandPacket {
  * @brief ACK with buoy state packet (received from Buoy after command processing)
  * Uses __attribute__((packed)) to ensure identical memory layout on both sides
  */
-struct __attribute__((packed)) AckWithStatePacket {
+struct __attribute__((packed)) AckWithStatusPacketESPNow {
     // ACK identification
     uint8_t buoyId;                     ///< Buoy ID sending the ACK
     uint32_t commandTimestamp;          ///< Timestamp of the acknowledged command
@@ -73,7 +73,7 @@ struct __attribute__((packed)) AckWithStatePacket {
  * @brief Pending command structure for retry mechanism
  */
 struct PendingCommandESPNow {
-    CommandPacket command;      ///< Command to send/retry
+    CommandPacketESPNow command;  ///< Command to send/retry
     uint32_t sentTime;          ///< Time when command was last sent
     uint8_t retryCount;         ///< Number of retries attempted
     bool ackReceived;           ///< Has ACK been received?
@@ -194,21 +194,21 @@ private:
      * @brief Process received ACK with buoy state
      * @param ack ACK with state packet received
      */
-    void processAck(const AckWithStatePacket& ack);
+    void processAck(const AckWithStatusPacketESPNow& ack);
     
     /**
      * @brief Add command to pending queue
      * @param command Command packet to add
      * @return true if added successfully
      */
-    bool addPendingCommand(const CommandPacket& command);
+    bool addPendingCommand(const CommandPacketESPNow& command);
     
     /**
      * @brief Send command packet via ESP-NOW
      * @param packet Command packet to send
      * @return true if sent successfully
      */
-    bool sendCommandPacket(const CommandPacket& packet);
+    bool sendCommandPacket(const CommandPacketESPNow& packet);
 };
 
 #endif // ESPNOW_COMMUNICATION_H

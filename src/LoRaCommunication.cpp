@@ -875,7 +875,7 @@ void LoRaCommunication::listenForResponses()
                 // emet chaque ACK DEUX fois (ACK_REPEAT_COUNT), et le E220 les
                 // livre regulierement concatenes : on observe couramment des
                 // buffers de 37 octets = 18 + 18 + 1. L'ancien test
-                // « recv_data_len == sizeof(AckWithStatePacketLora) » echouait
+                // « recv_data_len == sizeof(AckWithStatusPacketLora) » echouait
                 // alors, et les DEUX copies etaient perdues — donc une
                 // reemission de commande, et un acquittement jamais vu par
                 // l'operateur.
@@ -900,13 +900,13 @@ void LoRaCommunication::listenForResponses()
                     if (frameType == (uint8_t)LoRaMessageType::ACK)
                     {
                         // Ambiguite assumee : le type ACK couvre deux tailles,
-                        // AckWithStatePacketLora (18 o) et le legacy
+                        // AckWithStatusPacketLora (18 o) et le legacy
                         // AckPacketLora (7 o), sans rien pour les distinguer.
                         // On privilegie 18 des qu'il y a la place : c'est ce que
                         // toutes les bouees v1 emettent. Le legacy n'est
                         // reconnu que s'il ne reste que 7 octets.
-                        frameSize = (remaining >= sizeof(AckWithStatePacketLora))
-                                        ? sizeof(AckWithStatePacketLora)
+                        frameSize = (remaining >= sizeof(AckWithStatusPacketLora))
+                                        ? sizeof(AckWithStatusPacketLora)
                                         : sizeof(AckPacketLora);
                     }
 
@@ -950,10 +950,10 @@ void LoRaCommunication::listenForResponses()
                         case LoRaMessageType::ACK:
                         {
                             // Protocole v1 : conserve pour une bouee qui repondrait encore en 0x04
-                            if (frameSize == sizeof(AckWithStatePacketLora))
+                            if (frameSize == sizeof(AckWithStatusPacketLora))
                             {
-                                AckWithStatePacketLora *ack =
-                                    (AckWithStatePacketLora *)(recvFrame.recv_data + offset);
+                                AckWithStatusPacketLora *ack =
+                                    (AckWithStatusPacketLora *)(recvFrame.recv_data + offset);
 
                                 if (ackCount == 0)
                                 {
@@ -970,7 +970,7 @@ void LoRaCommunication::listenForResponses()
                                 Logger::logf("📥 ACK simple (legacy) reçu de Bouée #%d (RSSI=%d dBm)",
                                              legacyAck->buoyId, lastRssi);
 
-                                AckWithStatePacketLora enrichedAck;
+                                AckWithStatusPacketLora enrichedAck;
                                 memset(&enrichedAck, 0, sizeof(enrichedAck));
                                 enrichedAck.messageType = legacyAck->messageType;
                                 enrichedAck.buoyId = legacyAck->buoyId;
@@ -1482,7 +1482,7 @@ void LoRaCommunication::processObservable(const ObservablePacketLora& obs) {
 /**
  * @brief Process ACK packet enriched with buoy state (protocole v1)
  */
-void LoRaCommunication::processAck(const AckWithStatePacketLora& ack) {
+void LoRaCommunication::processAck(const AckWithStatusPacketLora& ack) {
     Logger::logf("✅ ACK+State reçu de Bouée #%d pour commande type=%d (ts=%lu)", 
                  ack.buoyId, ack.commandType, ack.commandTimestamp);
     

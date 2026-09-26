@@ -40,7 +40,7 @@
 enum class LoRaMessageType : uint8_t {
     // 0x01 REQUEST et 0x02 RESPONSE : retirés (ancien polling). Valeurs non réattribuées.
     COMMAND                 = 0x03,  ///< Descendant, 7 o — réponse attendue : ACK (joystick v1)
-    ACK                     = 0x04,  ///< Montant, 18 o — AckWithStatePacketLora (joystick v1)
+    ACK                     = 0x04,  ///< Montant, 18 o — AckWithStatusPacketLora (joystick v1)
     BUOY_STATUS             = 0x05,  ///< Montant, 58 o — BuoyStatusPacketLora
     OBSERVABLE              = 0x06,  ///< Montant, 11 o — ObservablePacketLora
     COMMAND_POS             = 0x07,  ///< Descendant, 15 o — réponse attendue : ACK
@@ -226,7 +226,7 @@ struct __attribute__((packed)) CommandPosPacketLora {
 // Tailles — les gardiens de la copie littérale
 // ─────────────────────────────────────────────────────────────────────────────
 static const size_t LORA_COMMAND_PACKET_SIZE = 7;   ///< CommandPacketLora (défini par chaque dépôt)
-static const size_t LORA_ACK_PACKET_SIZE     = 18;  ///< AckWithStatePacketLora (joystick v1)
+static const size_t LORA_ACK_PACKET_SIZE     = 18;  ///< AckWithStatusPacketLora (joystick v1)
 
 static_assert(sizeof(BuoyStatusPacketLora)    == 58, "BuoyStatusPacketLora doit faire 58 octets");
 static_assert(sizeof(ObservablePacketLora)    == 11, "ObservablePacketLora doit faire 11 octets");

@@ -184,7 +184,7 @@ bool ESPNowCommunication::sendCommand(uint8_t buoyId, const Command& cmd) {
     }
     
     // Prépare le paquet de commande
-    CommandPacket packet;
+    CommandPacketESPNow packet;
     packet.targetBuoyId = cmd.targetBuoyId;
     packet.command = cmd.type;
     packet.timestamp = cmd.timestamp;
@@ -329,9 +329,9 @@ void ESPNowCommunication::onDataSent(const uint8_t* mac, esp_now_send_status_t s
 // Traite les données reçues
 void ESPNowCommunication::handleReceivedData(const uint8_t* mac, const uint8_t* data, int len) {
     // Vérifie si c'est un ACK avec état (enriched ACK)
-    if (len == sizeof(AckWithStatePacket)) {
-        AckWithStatePacket ack;
-        memcpy(&ack, data, sizeof(AckWithStatePacket));
+    if (len == sizeof(AckWithStatusPacketESPNow)) {
+        AckWithStatusPacketESPNow ack;
+        memcpy(&ack, data, sizeof(AckWithStatusPacketESPNow));
         Logger::logf("📥 ACK+State reçu de Bouée #%d (cmd=%d)", ack.buoyId, ack.commandType);
         processAck(ack);
         return;
@@ -340,7 +340,7 @@ void ESPNowCommunication::handleReceivedData(const uint8_t* mac, const uint8_t* 
     // Vérifie la taille des données pour BuoyState
     if (len != sizeof(BuoyState)) {
         Logger::logf("✗ ESP-NOW: Taille invalide reçue %d (attendu %d ou %d)", 
-                     len, sizeof(BuoyState), sizeof(AckWithStatePacket));
+                     len, sizeof(BuoyState), sizeof(AckWithStatusPacketESPNow));
         return;
     }
     
@@ -474,7 +474,7 @@ const char* ESPNowCommunication::getModeName() const {
 /**
  * @brief Send command packet via ESP-NOW
  */
-bool ESPNowCommunication::sendCommandPacket(const CommandPacket& packet) {
+bool ESPNowCommunication::sendCommandPacket(const CommandPacketESPNow& packet) {
     int8_t index = findBuoyIndex(packet.targetBuoyId);
     if (index < 0) {
         Logger::logf("✗ ESP-NOW: Bouée #%d non trouvée", packet.targetBuoyId);
@@ -486,7 +486,7 @@ bool ESPNowCommunication::sendCommandPacket(const CommandPacket& packet) {
     esp_err_t result = esp_now_send(
         broadcastAddress,
         (uint8_t*)&packet,
-        sizeof(CommandPacket)
+        sizeof(CommandPacketESPNow)
     );
     
     if (result == ESP_OK) {
@@ -501,7 +501,7 @@ bool ESPNowCommunication::sendCommandPacket(const CommandPacket& packet) {
 /**
  * @brief Add command to pending queue
  */
-bool ESPNowCommunication::addPendingCommand(const CommandPacket& command) {
+bool ESPNowCommunication::addPendingCommand(const CommandPacketESPNow& command) {
     // Find a free slot or replace oldest completed command
     int8_t freeSlot = -1;
     
@@ -531,7 +531,7 @@ bool ESPNowCommunication::addPendingCommand(const CommandPacket& command) {
 /**
  * @brief Process ACK with buoy state packet
  */
-void ESPNowCommunication::processAck(const AckWithStatePacket& ack) {
+void ESPNowCommunication::processAck(const AckWithStatusPacketESPNow& ack) {
     Logger::logf("✅ ACK+State reçu de Bouée #%d pour commande type=%d (ts=%lu)", 
                  ack.buoyId, ack.commandType, ack.commandTimestamp);
     

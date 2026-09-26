@@ -223,7 +223,7 @@ struct __attribute__((packed)) AckPacketLora {
  * Enriched ACK containing full buoy state for immediate display update.
  * IMPORTANT: Packed to avoid padding issues
  */
-struct __attribute__((packed)) AckWithStatePacketLora {
+struct __attribute__((packed)) AckWithStatusPacketLora {
     // ACK identification
     LoRaMessageType messageType;        ///< Message type (ACK)
     uint8_t buoyId;                     ///< Buoy ID sending the ACK
@@ -244,7 +244,7 @@ struct __attribute__((packed)) AckWithStatePacketLora {
 };
 
 static_assert(sizeof(CommandPacketLora) == LORA_COMMAND_PACKET_SIZE, "CommandPacketLora doit faire 7 octets");
-static_assert(sizeof(AckWithStatePacketLora) == LORA_ACK_PACKET_SIZE, "AckWithStatePacketLora doit faire 18 octets");
+static_assert(sizeof(AckWithStatusPacketLora) == LORA_ACK_PACKET_SIZE, "AckWithStatusPacketLora doit faire 18 octets");
 
 /**
  * @brief Pending command structure for retry mechanism
@@ -598,7 +598,7 @@ private:
      * @brief Process received ACK (enriched with buoy state) — protocole v1 (0x04)
      * @param ack ACK+State packet received
      */
-    void processAck(const AckWithStatePacketLora& ack);
+    void processAck(const AckWithStatusPacketLora& ack);
 
     /**
      * @brief Process received BUOY_STATUS — protocole v2 (0x05, 58 o)
