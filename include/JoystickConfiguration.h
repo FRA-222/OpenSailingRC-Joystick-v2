@@ -82,7 +82,7 @@ constexpr const char* JOYSTICK_FIRMWARE_VERSION = "2.2.0";
 // détectable par logiciel, elle doit correspondre au module physiquement
 // branché — et au réglage de la bouée. Le module se configure via son switch
 // M0/M1 (ON = configuration, OFF = normal).
-constexpr CommMode COMM_MODE = CommMode::LORA_433;
+constexpr CommMode COMM_MODE = CommMode::ESP_NOW;  // CommMode::ESP_NOW / CommMode::LORA_920 / CommMode::LORA_433
 
 // Bande radio déduite du mode (utilisée par l'instance LoRa)
 constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
