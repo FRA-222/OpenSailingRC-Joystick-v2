@@ -140,7 +140,7 @@ enum class LoRaAirRate {
 // LoRa E220 configuration
 // IMPORTANT : le canal doit être IDENTIQUE côté joystick et côté bouée.
 #define LORA_CHANNEL_920 0x00       // 920.600 MHz (bande ISM japonaise)
-#define LORA_CHANNEL_433 23         // 433.125 MHz (bande ISM européenne)
+#define LORA_CHANNEL_433 24         // 434.125 MHz — ESSAI canal de repli (en service : 23, 433.125 MHz)
 #define LORA_ADDRESS_H 0x00         // High byte of address
 #define LORA_ADDRESS_L 0x07         // Low byte of address (Joystick) - Modifié pour correspondre à la Bouée
 #define LORA_NETID 0x00             // Network ID

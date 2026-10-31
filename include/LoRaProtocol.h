@@ -42,7 +42,7 @@ enum class LoRaMessageType : uint8_t {
     COMMAND                 = 0x03,  ///< Descendant, 7 o — réponse attendue : ACK (joystick v1)
     ACK                     = 0x04,  ///< Montant, 18 o — AckWithStatusPacketLora (joystick v1)
     BUOY_STATUS             = 0x05,  ///< Montant, 58 o — BuoyStatusPacketLora
-    OBSERVABLE              = 0x06,  ///< Montant, 11 o — ObservablePacketLora
+    OBSERVABLE              = 0x06,  ///< Montant, 13 o — ObservablePacketLora
     COMMAND_POS             = 0x07,  ///< Descendant, 15 o — réponse attendue : ACK
     COMMAND_BUOY_STATUS     = 0x08,  ///< Descendant, 7 o — même charge que 0x03, réponse : BUOY_STATUS
     COMMAND_POS_BUOY_STATUS = 0x09,  ///< Descendant, 15 o — même charge que 0x07, réponse : BUOY_STATUS
@@ -153,7 +153,7 @@ struct __attribute__((packed)) BuoyStatusPacketLora {
 };
 
 /**
- * @brief Observables lents d'exploitation — réponse à CMD_OBSERVABLE (11 octets)
+ * @brief Observables lents d'exploitation — réponse à CMD_OBSERVABLE (13 octets)
  */
 struct __attribute__((packed)) ObservablePacketLora {
     uint8_t  messageType;               ///< LoRaMessageType::OBSERVABLE (0x06)
@@ -167,6 +167,8 @@ struct __attribute__((packed)) ObservablePacketLora {
     uint8_t  totalDlToBuoyLossNumber;   ///< saturé 255
     uint8_t  courseToCons;              ///< BAM
     uint8_t  headingError;              ///< BAM signé
+    int8_t   rssiDownlink;              ///< dBm, RSSI de la dernière trame reçue d'un maître, 0 si aucune
+    int8_t   noiseDownlink;             ///< dBm, bruit de fond mesuré par la bouée avant l'émission, 0 si illisible
 };
 
 /**
@@ -229,7 +231,7 @@ static const size_t LORA_COMMAND_PACKET_SIZE = 7;   ///< CommandPacketLora (déf
 static const size_t LORA_ACK_PACKET_SIZE     = 18;  ///< AckWithStatusPacketLora (joystick v1)
 
 static_assert(sizeof(BuoyStatusPacketLora)    == 58, "BuoyStatusPacketLora doit faire 58 octets");
-static_assert(sizeof(ObservablePacketLora)    == 11, "ObservablePacketLora doit faire 11 octets");
+static_assert(sizeof(ObservablePacketLora)    == 13, "ObservablePacketLora doit faire 13 octets");
 static_assert(sizeof(Observable2PacketLora)   == 11, "Observable2PacketLora doit faire 11 octets");
 static_assert(sizeof(ObservableGPSPacketLora) ==  8, "ObservableGPSPacketLora doit faire 8 octets");
 static_assert(sizeof(CommandPosPacketLora)    == 15, "CommandPosPacketLora doit faire 15 octets");
