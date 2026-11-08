@@ -101,6 +101,10 @@ BuoyState BuoyStateManager::getSelectedBuoyState() {
     return comm.getBuoyState(selectedBuoyId);
 }
 
+int8_t BuoyStateManager::getSelectedBuoyDownlinkRssi() {
+    return comm.getDownlinkRssi(selectedBuoyId);
+}
+
 bool BuoyStateManager::isESPNowActiveForBuoy(uint8_t buoyId) {
     if (!espNowListener) return false;
     

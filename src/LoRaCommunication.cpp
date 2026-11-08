@@ -189,7 +189,7 @@ uint8_t LoRaCommunication::getTxPower() const {
     // Voir le commentaire détaillé dans LoRaCommunication.h : la table de
     // puissance du registre dépend de la bande, l'énumération de la
     // bibliothèque n'est valable que pour le variant JP.
-    return (band == LoRaBand::BAND_433) ? 0b11 : (uint8_t)TX_POWER_13dBm;
+    return (band == LoRaBand::BAND_433) ? 0b00 : (uint8_t)TX_POWER_13dBm;
 }
 
 void LoRaCommunication::noteLinkSample(int16_t rssi) {
@@ -1139,6 +1139,11 @@ BuoyInfo* LoRaCommunication::getAllBuoys() {
     return convertedBuoys;
 }
 
+int8_t LoRaCommunication::getDownlinkRssi(uint8_t buoyId) {
+    int8_t index = findBuoyById(buoyId);
+    return (index >= 0) ? buoys[index].rssiDownlink : 0;
+}
+
 int16_t LoRaCommunication::getLastRssi() const {
     return lastRssi;
 }
@@ -1169,6 +1174,7 @@ int8_t LoRaCommunication::addOrUpdateBuoy(uint8_t buoyId) {
         if (!buoys[i].registered) {
             buoys[i].registered = true;
             buoys[i].buoyId = buoyId;
+            buoys[i].rssiDownlink = 0;
             buoyCount++;
             
             Logger::logf("✓ LoRa: Nouvelle bouée découverte - ID #%d (total: %d)", 
@@ -1468,15 +1474,17 @@ void LoRaCommunication::processObservable(const ObservablePacketLora& obs) {
     state.speedGps = obs.speedGps / 100.0f;
     state.nbSat = obs.nbSat;
     state.lastObservableTime = millis();
+    buoys[index].rssiDownlink = obs.rssiDownlink;
 
     buoys[index].lastUpdateTime = millis();
     buoys[index].lastRssi = lastRssi;
     newDataAvailable = true;
 
-    Logger::logf("   ✓ Bouée #%d : temp=%d °C, batterie=%u %%, sat=%u, SOG=%.2f m/s, COG=%.0f°, pertes DL %u/%u",
+    Logger::logf("   ✓ Bouée #%d : temp=%d °C, batterie=%u %%, sat=%u, SOG=%.2f m/s, COG=%.0f°, pertes DL %u/%u, rssiDown=%d dBm",
                  obs.buoyId, obs.temperature, obs.remainingCapacity, obs.nbSat,
                  state.speedGps, state.courseGps,
-                 obs.partialDlToBuoyLossNumber, obs.totalDlToBuoyLossNumber);
+                 obs.partialDlToBuoyLossNumber, obs.totalDlToBuoyLossNumber,
+                 obs.rssiDownlink);
 }
 
 /**

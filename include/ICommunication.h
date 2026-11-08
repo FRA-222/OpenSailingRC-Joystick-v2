@@ -86,6 +86,8 @@ public:
     virtual BuoyInfo* getAllBuoys() = 0;
     virtual int16_t getLastRssi() const = 0;
     virtual float getLastSnr() const = 0;
+    /// RSSI de la liaison descendante mesuré par la bouée (dBm), 0 = inconnu / non géré
+    virtual int8_t getDownlinkRssi(uint8_t buoyId) { return 0; }
     virtual const char* getModeName() const = 0;
     virtual void removeInactiveBuoys(uint32_t timeoutMs) = 0;
 };

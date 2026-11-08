@@ -266,6 +266,7 @@ struct BuoyInfoLora {
     uint32_t lastUpdateTime;   ///< Last update timestamp
     int16_t lastRssi;          ///< Last RSSI value
     float lastSnr;             ///< Last SNR value
+    int8_t rssiDownlink;       ///< v2 (OBSERVABLE) — dBm mesuré par la bouée, 0 = inconnu
 };
 
 /**
@@ -403,6 +404,7 @@ public:
     BuoyInfo* getBuoyInfo(uint8_t buoyId) override;
     BuoyInfo* getAllBuoys() override;
     int16_t getLastRssi() const override;
+    int8_t getDownlinkRssi(uint8_t buoyId) override;
     float getLastSnr() const override;
     const char* getModeName() const override;
     void removeInactiveBuoys(uint32_t timeoutMs) override;

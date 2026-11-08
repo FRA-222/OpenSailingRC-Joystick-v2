@@ -21,7 +21,7 @@
  * ── Mise en page de l'écran principal (Core2 320x240) ────────────────────────
  *
  *  y=0    ┌───────────────────────────────────────────────┐
- *         │ JS 87%      NOM DE LA BOUEE      [RX: LoRa]   │  Header
+ *         │ JS 87%      NOM DE LA BOUEE    [LoRa : -57 dB] │  Header
  *  y=34   ├───────────────────────────────────────────────┤
  *         │     (o)GPS         (o)MAG        (o)YAW       │  Capteurs
  *  y=86   ├───────────────────────────────────────────────┤
@@ -57,6 +57,11 @@ namespace {
     // Icône batterie (contour statique, remplissage variable)
     constexpr int16_t BATT_ICON_X = SCR_W - MARGIN - 34;
     constexpr int16_t BATT_ICON_Y = TEMP_Y + 4;
+
+    // Seuils de couleur du RSSI descendant (dBm) : vert au-dessus de GOOD,
+    // orange jusqu'à FAIR, rouge en dessous (sensibilité E220 ~ -117 dBm à 9,6 kbps)
+    constexpr int8_t RSSI_DOWN_GOOD_DBM = -90;
+    constexpr int8_t RSSI_DOWN_FAIR_DBM = -105;
 }
 
 /**
@@ -328,8 +333,29 @@ void DisplayManager::drawHeader(bool connected, bool usingESPNow) {
     // la provenance de la télémétrie et non le canal de commande : en mode LoRa,
     // l'ESP-NOW est écouté passivement et prioritaire s'il est plus frais.
     // Redessiné avec le nom : le padding du nom peut mordre sur le badge.
-    const char* tag = !connected ? "RX: --" : (usingESPNow ? "RX: ESP-NOW" : "RX: LoRa");
-    uint16_t tagColor = !connected ? TFT_RED : (usingESPNow ? TFT_CYAN : TFT_GREEN);
+    // En LoRa, le badge porte le RSSI mesuré par la bouée sur la liaison
+    // descendante (rssiDown de l'OBSERVABLE), coloré selon la qualité.
+    char tagBuf[20];
+    const char* tag = tagBuf;
+    uint16_t tagColor;
+    if (!connected) {
+        tag = "RX: --";
+        tagColor = TFT_RED;
+    } else if (usingESPNow) {
+        tag = "RX: ESP-NOW";
+        tagColor = TFT_CYAN;
+    } else {
+        int8_t rssiDown = buoyMgr.getSelectedBuoyDownlinkRssi();
+        if (rssiDown == 0) {
+            snprintf(tagBuf, sizeof(tagBuf), "LoRa : -- dB");
+            tagColor = TFT_GREEN;
+        } else {
+            snprintf(tagBuf, sizeof(tagBuf), "LoRa : %d dB", rssiDown);
+            tagColor = (rssiDown >= RSSI_DOWN_GOOD_DBM) ? TFT_GREEN
+                     : (rssiDown >= RSSI_DOWN_FAIR_DBM) ? TFT_ORANGE
+                     : TFT_RED;
+        }
+    }
     drawTextField(cache.sourceTag, tag, tagColor,
                   &fonts::Font2, 1, TR_DATUM, SCR_W - MARGIN, 9, 100, nameRedrawn);
 

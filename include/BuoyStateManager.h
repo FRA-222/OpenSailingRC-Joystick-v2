@@ -100,6 +100,12 @@ public:
     bool isSelectedBuoyConnected();
 
     /**
+     * @brief RSSI mesuré par la bouée sélectionnée sur la liaison descendante LoRa
+     * @return dBm (remonté par l'OBSERVABLE), 0 si inconnu
+     */
+    int8_t getSelectedBuoyDownlinkRssi();
+
+    /**
      * @brief Get the name of a buoy
      * @param buoyId Buoy ID (0-5)
      * @return Buoy name (e.g., "Buoy #1")
