@@ -360,7 +360,8 @@ void loop() {
     static bool leftLeftProcessed = false;
     static bool leftRightProcessed = false;
 
-    int16_t leftX = joystick.getAxisCentered(AXIS_LEFT_X);
+    // Sens de l'axe X normalisé par matériel (LEFT_STICK_X_SIGN, HardwareConfig.h)
+    int16_t leftX = (int16_t)(LEFT_STICK_X_SIGN * joystick.getAxisCentered(AXIS_LEFT_X));
 
     // Joystick GAUCHE vers la GAUCHE : CMD_MAINTENANCE_ENTER
     if (leftX < -JOYSTICK_THRESHOLD && !leftLeftProcessed)
