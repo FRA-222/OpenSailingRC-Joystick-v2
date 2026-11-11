@@ -97,7 +97,7 @@ private:
 };
 
 // Forward declarations for conversion functions
-static BuoyState convertLoraToState(const BuoyStateLora& loraState);
+static BuoyState convertLoraToState(const BuoyInfoLora& loraInfo);
 static BuoyInfo convertLoraInfoToInfo(const BuoyInfoLora& loraInfo);
 
 LoRaCommunication::LoRaCommunication(LoRaBand radioBand, LoRaAirRate radioAirRate) {
@@ -1076,7 +1076,7 @@ BuoyState LoRaCommunication::getLastBuoyState() {
     }
     
     if (mostRecentIndex >= 0) {
-        return convertLoraToState(buoys[mostRecentIndex].lastState);
+        return convertLoraToState(buoys[mostRecentIndex]);
     }
     
     // Return empty state if no buoy found
@@ -1088,7 +1088,7 @@ BuoyState LoRaCommunication::getBuoyState(uint8_t buoyId) {
     int8_t index = findBuoyById(buoyId);
     
     if (index >= 0) {
-        return convertLoraToState(buoys[index].lastState);
+        return convertLoraToState(buoys[index]);
     }
     
     // Return empty state if buoy not found
@@ -1175,6 +1175,7 @@ int8_t LoRaCommunication::addOrUpdateBuoy(uint8_t buoyId) {
             buoys[i].registered = true;
             buoys[i].buoyId = buoyId;
             buoys[i].rssiDownlink = 0;
+            buoys[i].distanceToHome = 0.0f;
             buoyCount++;
             
             Logger::logf("✓ LoRa: Nouvelle bouée découverte - ID #%d (total: %d)", 
@@ -1229,8 +1230,9 @@ void LoRaCommunication::processReceivedMessage(const uint8_t* data, size_t len) 
     }
 }
 
-// Helper function to convert BuoyStateLora to BuoyState
-static BuoyState convertLoraToState(const BuoyStateLora& loraState) {
+// Helper function to convert BuoyInfoLora (BuoyStateLora + champs v2) to BuoyState
+static BuoyState convertLoraToState(const BuoyInfoLora& loraInfo) {
+    const BuoyStateLora& loraState = loraInfo.lastState;
     BuoyState state;
     state.buoyId = loraState.buoyId;
     state.timestamp = loraState.timestamp;
@@ -1242,6 +1244,7 @@ static BuoyState convertLoraToState(const BuoyStateLora& loraState) {
     state.temperature = loraState.temperature;
     state.remainingCapacity = loraState.remainingCapacity;
     state.distanceToCons = loraState.distanceToCons;
+    state.distanceToHome = loraInfo.distanceToHome;
     state.autoPilotThrottleCmde = loraState.autoPilotThrottleCmde;
     state.autoPilotTrueHeadingCmde = loraState.autoPilotTrueHeadingCmde;
     state.latitude = loraState.latitude;
@@ -1256,7 +1259,7 @@ static BuoyInfo convertLoraInfoToInfo(const BuoyInfoLora& loraInfo) {
     BuoyInfo info;
     info.registered = loraInfo.registered;
     info.buoyId = loraInfo.buoyId;
-    info.lastState = convertLoraToState(loraInfo.lastState);
+    info.lastState = convertLoraToState(loraInfo);
     info.lastUpdateTime = loraInfo.lastUpdateTime;
     info.lastRssi = loraInfo.lastRssi;
     info.lastSnr = loraInfo.lastSnr;
@@ -1475,16 +1478,17 @@ void LoRaCommunication::processObservable(const ObservablePacketLora& obs) {
     state.nbSat = obs.nbSat;
     state.lastObservableTime = millis();
     buoys[index].rssiDownlink = obs.rssiDownlink;
+    buoys[index].distanceToHome = obs.distanceToHome / 10.0f;   // décimètres → m
 
     buoys[index].lastUpdateTime = millis();
     buoys[index].lastRssi = lastRssi;
     newDataAvailable = true;
 
-    Logger::logf("   ✓ Bouée #%d : temp=%d °C, batterie=%u %%, sat=%u, SOG=%.2f m/s, COG=%.0f°, pertes DL %u/%u, rssiDown=%d dBm",
+    Logger::logf("   ✓ Bouée #%d : temp=%d °C, batterie=%u %%, sat=%u, SOG=%.2f m/s, COG=%.0f°, pertes DL %u/%u, rssiDown=%d dBm, distHome=%.1f m",
                  obs.buoyId, obs.temperature, obs.remainingCapacity, obs.nbSat,
                  state.speedGps, state.courseGps,
                  obs.partialDlToBuoyLossNumber, obs.totalDlToBuoyLossNumber,
-                 obs.rssiDownlink);
+                 obs.rssiDownlink, buoys[index].distanceToHome);
 }
 
 /**

@@ -153,7 +153,7 @@ struct __attribute__((packed)) BuoyStatusPacketLora {
 };
 
 /**
- * @brief Observables lents d'exploitation — réponse à CMD_OBSERVABLE (13 octets)
+ * @brief Observables lents d'exploitation — réponse à CMD_OBSERVABLE (15 octets)
  */
 struct __attribute__((packed)) ObservablePacketLora {
     uint8_t  messageType;               ///< LoRaMessageType::OBSERVABLE (0x06)
@@ -169,6 +169,7 @@ struct __attribute__((packed)) ObservablePacketLora {
     uint8_t  headingError;              ///< BAM signé
     int8_t   rssiDownlink;              ///< dBm, RSSI de la dernière trame reçue d'un maître, 0 si aucune
     int8_t   noiseDownlink;             ///< dBm, bruit de fond mesuré par la bouée avant l'émission, 0 si illisible
+    uint16_t distanceToHome;            ///< décimètres, saturé 65535 (6,5 km), 0 sans GPS ou sans Home
 };
 
 /**
@@ -231,7 +232,7 @@ static const size_t LORA_COMMAND_PACKET_SIZE = 7;   ///< CommandPacketLora (déf
 static const size_t LORA_ACK_PACKET_SIZE     = 18;  ///< AckWithStatusPacketLora (joystick v1)
 
 static_assert(sizeof(BuoyStatusPacketLora)    == 58, "BuoyStatusPacketLora doit faire 58 octets");
-static_assert(sizeof(ObservablePacketLora)    == 13, "ObservablePacketLora doit faire 13 octets");
+static_assert(sizeof(ObservablePacketLora)    == 15, "ObservablePacketLora doit faire 15 octets");
 static_assert(sizeof(Observable2PacketLora)   == 11, "Observable2PacketLora doit faire 11 octets");
 static_assert(sizeof(ObservableGPSPacketLora) ==  8, "ObservableGPSPacketLora doit faire 8 octets");
 static_assert(sizeof(CommandPosPacketLora)    == 15, "CommandPosPacketLora doit faire 15 octets");

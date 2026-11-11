@@ -181,6 +181,8 @@ private:
         TextField sourceTag;
         TextField temperature;
         TextField battery;
+        TextField rssiDown;      ///< v1 : RSSI descendant LoRa, ligne 3 au centre
+        TextField distanceToHome; ///< v2 : distance au Home, bande température / batterie au centre
         TextField generalMode;
         TextField navMode;
         TextField distance;

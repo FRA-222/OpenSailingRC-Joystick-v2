@@ -267,6 +267,7 @@ struct BuoyInfoLora {
     int16_t lastRssi;          ///< Last RSSI value
     float lastSnr;             ///< Last SNR value
     int8_t rssiDownlink;       ///< v2 (OBSERVABLE) — dBm mesuré par la bouée, 0 = inconnu
+    float distanceToHome;      ///< v2 (OBSERVABLE) — m, 0 = inconnu (hors BuoyStateLora, structure de fil v1)
 };
 
 /**

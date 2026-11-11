@@ -245,6 +245,7 @@ void DisplayManager::invalidateCachedFields() {
     cache.sourceTag.valid = false;
     cache.temperature.valid = false;
     cache.battery.valid = false;
+    cache.distanceToHome.valid = false;
     cache.generalMode.valid = false;
     cache.navMode.valid = false;
     cache.distance.valid = false;
@@ -410,12 +411,26 @@ void DisplayManager::drawSensorLEDs(const BuoyState& state, bool force) {
 }
 
 void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
-    // Bande température (gauche) / batterie (droite)
+    // Bande température (gauche) / distance au Home (centre) / batterie (droite).
+    // Zones effacées : 8..98, 115..205 et 206..272 (icône batterie au-delà).
     char tempBuffer[16];
     // state.temperature est un float : "%d" lisait un argument entier inexistant
     snprintf(tempBuffer, sizeof(tempBuffer), "%.0f C", state.temperature);
     drawTextField(cache.temperature, tempBuffer, TFT_CYAN,
                   &fonts::Font4, 1, TL_DATUM, MARGIN, TEMP_Y, 90, force);
+
+    // Distance au Home (OBSERVABLE en LoRa, état diffusé en ESP-NOW).
+    // 0 = pas de GPS ou pas de Home côté bouée.
+    char homeBuffer[16];
+    if (state.distanceToHome <= 0.0f) {
+        snprintf(homeBuffer, sizeof(homeBuffer), "H --");
+    } else if (state.distanceToHome < 1000.0f) {
+        snprintf(homeBuffer, sizeof(homeBuffer), "H %.0fm", state.distanceToHome);
+    } else {
+        snprintf(homeBuffer, sizeof(homeBuffer), "H %.1fk", state.distanceToHome / 1000.0f);
+    }
+    drawTextField(cache.distanceToHome, homeBuffer, TFT_WHITE,
+                  &fonts::Font4, 1, TC_DATUM, SCR_W / 2, TEMP_Y, 90, force);
 
     uint8_t batteryPercent = (uint8_t)((state.remainingCapacity));
     if (batteryPercent > 100) batteryPercent = 100;
@@ -423,7 +438,7 @@ void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
     char battBuffer[16];
     snprintf(battBuffer, sizeof(battBuffer), "%d%%", batteryPercent);
     drawTextField(cache.battery, battBuffer, getBatteryColor(batteryPercent),
-                  &fonts::Font4, 1, TR_DATUM, SCR_W - MARGIN - 40, TEMP_Y, 90, force);
+                  &fonts::Font4, 1, TR_DATUM, SCR_W - MARGIN - 40, TEMP_Y, 66, force);
 
     // Icône batterie tout à droite (contour dessiné une fois par drawStaticLayout)
     if (force || cache.batteryIcon != batteryPercent) {

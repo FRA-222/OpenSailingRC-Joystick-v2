@@ -25,6 +25,13 @@
 #error "DisplayManagerV1.cpp ne se compile que pour le matériel v1 (JOYSTICK_HW=1)"
 #endif
 
+namespace {
+    // Seuils de couleur du RSSI descendant (dBm), identiques à DisplayManagerV2.cpp :
+    // vert au-dessus de GOOD, orange jusqu'à FAIR, rouge en dessous
+    constexpr int8_t RSSI_DOWN_GOOD_DBM = -90;
+    constexpr int8_t RSSI_DOWN_FAIR_DBM = -105;
+}
+
 /**
  * Convertit RGB565 pour compenser la permutation de l'écran AtomS3
  * L'écran AtomS3 fait: R→G, G→B, B→R
@@ -187,6 +194,7 @@ void DisplayManager::invalidateCachedFields() {
     cache.buoyName.valid = false;
     cache.temperature.valid = false;
     cache.battery.valid = false;
+    cache.rssiDown.valid = false;
     cache.generalMode.valid = false;
     cache.navMode.valid = false;
     cache.distance.valid = false;
@@ -296,7 +304,8 @@ void DisplayManager::drawSensorLEDs(const BuoyState& state, bool force) {
 }
 
 void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
-    // Ligne 3 : Température et % Batterie
+    // Ligne 3 : Température à gauche, RSSI descendant au centre, % Batterie à droite.
+    // Les paddings (36 / 52 / 36 px) se partagent les 124 px utiles sans se chevaucher.
     const int16_t y = 58;  // Ajusté pour nouvelle position
 
     // Température à gauche.
@@ -305,7 +314,30 @@ void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
     char tempBuffer[16];
     snprintf(tempBuffer, sizeof(tempBuffer), "%.0f C", state.temperature);
     drawTextField(cache.temperature, tempBuffer, TFT_CYAN,
-                  &fonts::Font2, 1.0f, TL_DATUM, 2, y, 60, force);
+                  &fonts::Font2, 1.0f, TL_DATUM, 2, y, 36, force);
+
+    // RSSI mesuré par la bouée sur la liaison descendante (rssiDown de l'OBSERVABLE),
+    // même code couleur que le badge du v2. En ESP-NOW la valeur LoRa n'est pas
+    // la source affichée : on l'indique comme le badge « RX: ESP-NOW » du v2.
+    char rssiBuffer[16];
+    uint16_t rssiColor;
+    if (cache.usingESPNow) {
+        snprintf(rssiBuffer, sizeof(rssiBuffer), "ESP");
+        rssiColor = TFT_CYAN;
+    } else {
+        int8_t rssiDown = buoyMgr.getSelectedBuoyDownlinkRssi();
+        if (rssiDown == 0) {
+            snprintf(rssiBuffer, sizeof(rssiBuffer), "-- dB");
+            rssiColor = TFT_GREEN;
+        } else {
+            snprintf(rssiBuffer, sizeof(rssiBuffer), "%d dB", rssiDown);
+            rssiColor = (rssiDown >= RSSI_DOWN_GOOD_DBM) ? TFT_GREEN
+                      : (rssiDown >= RSSI_DOWN_FAIR_DBM) ? TFT_ORANGE
+                      : TFT_RED;
+        }
+    }
+    drawTextField(cache.rssiDown, rssiBuffer, rssiColor,
+                  &fonts::Font2, 1.0f, TC_DATUM, 64, y, 52, force);
 
     // Batterie à droite (conversion de mAh en %)
     uint8_t batteryPercent = (uint8_t)((state.remainingCapacity));
@@ -314,7 +346,7 @@ void DisplayManager::drawTempBattery(const BuoyState& state, bool force) {
     char battBuffer[16];
     snprintf(battBuffer, sizeof(battBuffer), "%d%%", batteryPercent);
     drawTextField(cache.battery, battBuffer, TFT_CYAN,
-                  &fonts::Font2, 1.0f, TR_DATUM, 126, y, 60, force);
+                  &fonts::Font2, 1.0f, TR_DATUM, 126, y, 36, force);
 }
 
 void DisplayManager::drawDistanceThrottle(const BuoyState& state, bool force) {

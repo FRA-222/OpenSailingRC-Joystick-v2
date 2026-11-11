@@ -592,6 +592,7 @@ void ESPNowCommunication::processAck(const AckWithStatusPacketESPNow& ack) {
     state.temperature = ack.temperature;
     state.remainingCapacity = ack.remainingCapacity;
     state.distanceToCons = ack.distanceToCons;
+    state.distanceToHome = ack.distanceToHome;
     state.autoPilotThrottleCmde = ack.autoPilotThrottleCmde;
     state.autoPilotTrueHeadingCmde = ack.autoPilotTrueHeadingCmde;
     

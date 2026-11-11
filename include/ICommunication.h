@@ -41,6 +41,7 @@ struct BuoyState {
     float temperature;
     float remainingCapacity;
     float distanceToCons;
+    float distanceToHome;               ///< m, 0 sans GPS ou sans Home (même place que dans la bouée : structure de fil ESP-NOW)
     int8_t autoPilotThrottleCmde;
     float autoPilotTrueHeadingCmde;     ///< Heading command in degrees (float to match Buoy)
 

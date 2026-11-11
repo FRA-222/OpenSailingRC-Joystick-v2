@@ -62,6 +62,7 @@ struct __attribute__((packed)) AckWithStatusPacketESPNow {
     float temperature;                  ///< Temperature in °C
     float remainingCapacity;            ///< Remaining battery capacity
     float distanceToCons;               ///< Distance to consigne in meters
+    float distanceToHome;               ///< Distance to Home in meters
     int8_t autoPilotThrottleCmde;       ///< Autopilot throttle command
     int16_t autoPilotTrueHeadingCmde;   ///< Autopilot heading command (0-359)
 
