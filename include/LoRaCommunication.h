@@ -140,7 +140,7 @@ enum class LoRaAirRate {
 // LoRa E220 configuration
 // IMPORTANT : le canal doit être IDENTIQUE côté joystick et côté bouée.
 #define LORA_CHANNEL_920 0x00       // 920.600 MHz (bande ISM japonaise)
-#define LORA_CHANNEL_433 24         // 434.125 MHz — ESSAI canal de repli (en service : 23, 433.125 MHz)
+#define LORA_CHANNEL_433 24         // 434.125 MHz — canal d'exploitation depuis 1.2.2 (23 = 433.125 MHz jusqu'en 2.1.6)
 #define LORA_ADDRESS_H 0x00         // High byte of address
 #define LORA_ADDRESS_L 0x07         // Low byte of address (Joystick) - Modifié pour correspondre à la Bouée
 #define LORA_NETID 0x00             // Network ID
@@ -364,9 +364,10 @@ public:
      *   - E220-900T22S(JP) : 0b00 = 13 dBm (maxi ARIB), 0b01 = 12, 0b10 = 7, 0b11 = 0
      *   - E220-400T22S     : 0b00 = 22 dBm, 0b01 = 17, 0b10 = 13, 0b11 = 10 dBm
      * Écrire TX_POWER_13dBm (0b00) sur un module 433 le ferait donc émettre à
-     * 22 dBm. On sélectionne 0b11 = 10 dBm, compatible avec la limite de 10 mW
-     * de la bande ISM 433 européenne.
-     * À confirmer contre la datasheet du module 433 avant émission prolongée.
+     * 22 dBm.
+     * Depuis 1.2.2 on sélectionne 0b00 = 22 dBm (~160 mW) en 433, pour la portée :
+     * c'est AU-DELÀ de la limite de 10 mW de la bande ISM 433 européenne. 0b11 =
+     * 10 dBm pour rester dans cette limite. Même valeur sur bouée et passerelle.
      */
     uint8_t getTxPower() const;
 
