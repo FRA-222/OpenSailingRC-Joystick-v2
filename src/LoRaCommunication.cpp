@@ -103,6 +103,8 @@ static BuoyInfo convertLoraInfoToInfo(const BuoyInfoLora& loraInfo);
 LoRaCommunication::LoRaCommunication(LoRaBand radioBand, LoRaAirRate radioAirRate) {
     band = radioBand;
     airRate = radioAirRate;
+    channel = loRaBandProfile(bandCode())->defaultChannel;
+    txPowerDbm = loRaBandProfile(bandCode())->defaultPowerDbm;
     buoyCount = 0;
     newDataAvailable = false;
     lastRssi = 0;
@@ -155,6 +157,21 @@ LoRaCommunication::LoRaCommunication(LoRaBand radioBand, LoRaAirRate radioAirRat
 
 void LoRaCommunication::setBand(LoRaBand radioBand) {
     band = radioBand;
+    // Les réglages précédents peuvent sortir du profil de la nouvelle bande
+    setRadioSettings(channel, txPowerDbm);
+}
+
+void LoRaCommunication::setRadioSettings(uint8_t radioChannel, int8_t powerDbm) {
+    channel = loRaSanitizeChannel(bandCode(), radioChannel);
+    txPowerDbm = loRaSanitizePowerDbm(bandCode(), powerDbm);
+}
+
+uint8_t LoRaCommunication::bandCode() const {
+    return (band == LoRaBand::BAND_433) ? LORA_BAND_CODE_433 : LORA_BAND_CODE_920;
+}
+
+int8_t LoRaCommunication::getTxPowerDbm() const {
+    return txPowerDbm;
 }
 
 void LoRaCommunication::setAirRate(LoRaAirRate radioAirRate) {
@@ -174,22 +191,19 @@ const char* LoRaCommunication::getAirRateName() const {
 }
 
 uint8_t LoRaCommunication::getChannel() const {
-    return (band == LoRaBand::BAND_433) ? LORA_CHANNEL_433 : LORA_CHANNEL_920;
+    return channel;
 }
 
 float LoRaCommunication::getFrequencyMHz() const {
     // Formules de la datasheet E220 : pas de 1 MHz en 433, 0.2 MHz en 920 (JP)
-    if (band == LoRaBand::BAND_433) {
-        return 410.125f + getChannel() * 1.0f;
-    }
-    return 920.6f + getChannel() * 0.2f;
+    return loRaChannelFrequencyMHz(bandCode(), channel);
 }
 
 uint8_t LoRaCommunication::getTxPower() const {
     // Voir le commentaire détaillé dans LoRaCommunication.h : la table de
     // puissance du registre dépend de la bande, l'énumération de la
     // bibliothèque n'est valable que pour le variant JP.
-    return (band == LoRaBand::BAND_433) ? 0b00 : (uint8_t)TX_POWER_13dBm;
+    return loRaPowerRegister(bandCode(), txPowerDbm);
 }
 
 void LoRaCommunication::noteLinkSample(int16_t rssi) {
@@ -699,9 +713,11 @@ bool LoRaCommunication::begin() {
                  getAirRateName(),
                  rateBits.c_str(),
                  (band == LoRaBand::BAND_433) ? " (8N1)" : "");
-    Logger::logf("   - Puissance: registre 0b%s (%s)",
-                 (band == LoRaBand::BAND_433) ? "11" : "00",
-                 (band == LoRaBand::BAND_433) ? "10 dBm" : "13 dBm");
+    // Ancienne trace : « 0b11 (10 dBm) » en dur, alors que le registre écrit
+    // valait 0b00 = 22 dBm. Elle reflète désormais la valeur réellement écrite.
+    Logger::logf("   - Puissance: registre 0b%u%u (%d dBm)",
+                 (unsigned)((getTxPower() >> 1) & 1), (unsigned)(getTxPower() & 1),
+                 (int)txPowerDbm);
     Logger::log("");
 
     Logger::log("⏳ LoRa: Sending configuration to module (will succeed only if switch ON)...");

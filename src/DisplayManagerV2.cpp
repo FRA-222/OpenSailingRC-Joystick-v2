@@ -16,6 +16,8 @@
 #include "DisplayManager.h"
 #include "Logger.h"
 #include "HardwareConfig.h"
+#include "JoystickConfiguration.h"
+#include "LoRaBandProfiles.h"
 
 /*
  * ── Mise en page de l'écran principal (Core2 320x240) ────────────────────────
@@ -836,4 +838,156 @@ void DisplayManager::displayBootDiagnostic(const HardwareDiagResult& d, uint32_t
     // Efface et prépare l'écran principal
     M5.Display.fillScreen(TFT_BLACK);
     cache.firstUpdate = true;
+}
+
+// ============================================================================
+// MENU DE CONFIGURATION (Core2 320x240) — liste
+// ============================================================================
+
+namespace {
+    constexpr int16_t SETUP_ROW_Y0    = 36;   // première ligne de la liste
+    constexpr int16_t SETUP_ROW_H     = 24;
+    constexpr uint8_t SETUP_MAX_ROWS  = 7;
+    constexpr int16_t SETUP_DETAIL_Y  = 206;
+    constexpr int16_t SETUP_FOOTER_Y  = 226;
+    constexpr int16_t SETUP_VALUE_X   = 184;
+    constexpr uint16_t SETUP_SELECTED_BG = 0x2967;   // gris-bleu sombre
+}
+
+void DisplayManager::drawSetupBoot(const JoystickSettings& s, bool fromNvs, uint8_t holdPercent) {
+    const int16_t cx = DISPLAY_WIDTH / 2;
+    M5.Display.setRotation(1);
+    M5.Display.setTextSize(1);
+
+    // Partie fixe redessinée seulement hors maintien : la barre seule évolue
+    if (holdPercent == 0) {
+        M5.Display.fillScreen(TFT_BLACK);
+        M5.Display.setTextDatum(MC_DATUM);
+        M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Display.setFont(&fonts::Font4);
+        M5.Display.drawString("OpenSailingRC", cx, 40);
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.drawString(String(JoystickConfiguration::productName()) + "  -  v" + JOYSTICK_FIRMWARE_VERSION, cx, 70);
+
+        M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
+        M5.Display.setFont(&fonts::Font4);
+        if (s.isLoRa()) {
+            const LoRaBandProfile* p = loRaBandProfile(s.loraBand);
+            M5.Display.drawString(String("LoRa ") + (p ? p->name : "?"), cx, 110);
+            M5.Display.setFont(&fonts::Font2);
+            char line[48];
+            snprintf(line, sizeof(line), "Channel %u (%.3f MHz)  -  %d dBm",
+                     (unsigned)s.loraChannel, loRaChannelFrequencyMHz(s.loraBand, s.loraChannel),
+                     (int)s.loraPowerDbm);
+            M5.Display.drawString(line, cx, 138);
+            M5.Display.drawString(s.espnowPassive ? "ESP-NOW listen: ON" : "ESP-NOW listen: OFF", cx, 158);
+        } else {
+            M5.Display.drawString("ESP-NOW", cx, 120);
+        }
+
+        M5.Display.setFont(&fonts::Font2);
+        if (!fromNvs) {
+            M5.Display.setTextColor(TFT_DARKGREY, TFT_BLACK);
+            M5.Display.drawString("(default settings)", cx, 180);
+        }
+        M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+        M5.Display.drawString("Hold A for setup", cx, 204);
+    }
+
+    // Barre de progression du maintien
+    const int16_t bx = 60, by = 222, bw = 200, bh = 10;
+    M5.Display.fillRect(bx, by, bw, bh, TFT_BLACK);
+    if (holdPercent > 0) {
+        M5.Display.drawRect(bx, by, bw, bh, TFT_YELLOW);
+        M5.Display.fillRect(bx + 1, by + 1, (int16_t)((bw - 2) * holdPercent / 100), bh - 2, TFT_YELLOW);
+    }
+}
+
+void DisplayManager::drawSetupMenu(const SetupMenuView& v) {
+    M5.Display.setRotation(1);
+    M5.Display.setTextSize(1);
+
+    // En-tête
+    // Les zones en-tête / liste / précision / aide se jouxtent sans espace :
+    // chaque appel repeint tout l'écran, sans fillScreen (pas de clignotement).
+    M5.Display.fillRect(0, 0, DISPLAY_WIDTH, SETUP_ROW_Y0, TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.setTextDatum(TL_DATUM);
+    M5.Display.drawString("SETUP", 8, 5);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextDatum(TR_DATUM);
+    M5.Display.drawString(String("v") + v.version, DISPLAY_WIDTH - 8, 10);
+    if (v.dirty) {
+        M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+        M5.Display.setTextDatum(TC_DATUM);
+        M5.Display.drawString("modified", DISPLAY_WIDTH / 2, 10);
+    }
+    M5.Display.drawFastHLine(0, SETUP_ROW_Y0 - 3, DISPLAY_WIDTH, TFT_DARKGREY);
+
+    // Liste : défile si elle dépasse SETUP_MAX_ROWS
+    uint8_t first = (v.selected >= SETUP_MAX_ROWS) ? (uint8_t)(v.selected - SETUP_MAX_ROWS + 1) : 0;
+    for (uint8_t row = 0; row < SETUP_MAX_ROWS; row++) {
+        int16_t y = SETUP_ROW_Y0 + row * SETUP_ROW_H;
+        uint8_t i = first + row;
+        bool sel = (i == v.selected);
+        uint16_t bg = sel ? SETUP_SELECTED_BG : TFT_BLACK;
+        M5.Display.fillRect(0, y, DISPLAY_WIDTH, SETUP_ROW_H, TFT_BLACK);
+        if (sel) M5.Display.fillRect(0, y, DISPLAY_WIDTH, SETUP_ROW_H - 2, bg);
+        if (i >= v.count) continue;
+
+        const SetupMenuItem& it = v.items[i];
+        int16_t cy = y + (SETUP_ROW_H - 2) / 2;
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setTextDatum(ML_DATUM);
+        M5.Display.setTextColor(it.editable ? TFT_WHITE : TFT_GREEN, bg);
+        M5.Display.drawString(sel ? ">" : " ", 6, cy);
+        M5.Display.drawString(it.label, 20, cy);
+        if (it.editable) {
+            M5.Display.setTextColor(TFT_CYAN, bg);
+            M5.Display.drawString(it.value, SETUP_VALUE_X, cy);
+            if (sel) {
+                M5.Display.setTextColor(TFT_LIGHTGREY, bg);
+                M5.Display.drawString("<", SETUP_VALUE_X - 16, cy);
+                M5.Display.setTextDatum(MR_DATUM);
+                M5.Display.drawString(">", DISPLAY_WIDTH - 10, cy);
+            }
+        }
+    }
+
+    // Précision de l'entrée sélectionnée
+    M5.Display.fillRect(0, SETUP_DETAIL_Y - 2, DISPLAY_WIDTH, 18, TFT_BLACK);
+    if (v.selected < v.count) {
+        const SetupMenuItem& it = v.items[v.selected];
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setTextDatum(ML_DATUM);
+        M5.Display.setTextColor(it.warning ? TFT_ORANGE : TFT_LIGHTGREY, TFT_BLACK);
+        M5.Display.drawString(it.detail, 20, SETUP_DETAIL_Y + 7);
+    }
+
+    // Aide
+    M5.Display.fillRect(0, SETUP_FOOTER_Y - 4, DISPLAY_WIDTH, DISPLAY_HEIGHT - SETUP_FOOTER_Y + 4, TFT_BLACK);
+    M5.Display.drawFastHLine(0, SETUP_FOOTER_Y - 4, DISPLAY_WIDTH, TFT_DARKGREY);
+    M5.Display.setFont(&fonts::Font0);
+    M5.Display.setTextDatum(MC_DATUM);
+    M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    char help[64];
+    // Font0 = 6 px par caractère : 53 caractères au plus sur 320 px
+    snprintf(help, sizeof(help), "Stick: ^v move  <> change   %s: ok   %s: back",
+             v.okName, v.backName);
+    M5.Display.drawString(help, DISPLAY_WIDTH / 2, SETUP_FOOTER_Y + 6);
+}
+
+void DisplayManager::drawSetupMessage(const char* title, const char* line) {
+    const int16_t cx = DISPLAY_WIDTH / 2;
+    M5.Display.setRotation(1);
+    M5.Display.setTextSize(1);
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextDatum(MC_DATUM);
+    M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.drawString(title, cx, 100);
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.drawString(line, cx, 140);
 }

@@ -81,6 +81,12 @@ static const uint16_t DISPLAY_HEIGHT = 128;
 #define BTN_LABEL_NAV_HOLD          "[JS-L] Bouton stick GAUCHE"
 #define BTN_LABEL_NAV_STOP          "[JS-R] Bouton stick DROIT"
 
+// Menu de configuration (bouton A maintenu au démarrage) : OK et Retour
+#define BTN_MENU_OK                 BTN_RIGHT_STICK  ///< Jaune droit
+#define BTN_MENU_BACK               BTN_LEFT_STICK   ///< Jaune gauche
+#define BTN_MENU_OK_NAME            "Y-R"            ///< Libellé court pour l'écran
+#define BTN_MENU_BACK_NAME          "Y-L"
+
 // Sens de l'axe X des sticks : +1 = pousser à droite donne une valeur positive
 #define LEFT_STICK_X_SIGN  (+1)
 #define RIGHT_STICK_X_SIGN (+1)
@@ -143,6 +149,12 @@ static const uint16_t DISPLAY_HEIGHT = 240;
 #define BTN_LABEL_HOME_VALIDATION   "[DUAL-L] Bouton DualButton GAUCHE (rouge)"
 #define BTN_LABEL_NAV_HOLD          "[JS-L] Bouton stick GAUCHE"
 #define BTN_LABEL_NAV_STOP          "[JS-R] Bouton stick DROIT"
+
+// Menu de configuration (bouton A maintenu au démarrage) : OK et Retour
+#define BTN_MENU_OK                 BTN_RIGHT        ///< Dual Button droit (bleu)
+#define BTN_MENU_BACK               BTN_LEFT         ///< Dual Button gauche (rouge)
+#define BTN_MENU_OK_NAME            "BLUE"           ///< Libellé court pour l'écran
+#define BTN_MENU_BACK_NAME          "RED"
 
 // L'axe X du Unit Joystick est inversé (gauche comme droit) : pousser à droite donne une valeur négative
 #define LEFT_STICK_X_SIGN  (-1)

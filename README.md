@@ -28,9 +28,17 @@ pins LoRa, taille d'écran, correspondance bouton → action), `src/JoystickMana
 `Logger`. Protocole LoRa v2 (`LoRaProtocol.h`, `BUOY_STATUS` 58 o, `OBSERVABLE` 11 o),
 gestion des bouées, commandes et ESP-NOW sont communs et identiques sur les deux matériels.
 
-Dans `JoystickConfiguration.h` : `COMM_MODE` (ESP-NOW / LoRa 920 / LoRa 433),
-`LORA_AIR_RATE`, `JOYSTICK_ESPNOW_PASSIVE`, `DEBUG_JOYSTICK_RAW`, `DEBUG_SYSTEM_STATE`,
-`JOYSTICK_FIRMWARE_VERSION`. Ces réglages doivent correspondre à ceux de la bouée.
+**Menu de configuration** : maintenir le bouton A (écran de l'AtomS3, bouton A du Core2)
+pendant 2 s au démarrage. On y règle la liaison (ESP-NOW / LoRa), la bande, la puissance et
+le canal LoRa, et l'écoute ESP-NOW passive ; le choix est conservé en NVS et s'applique
+sans redémarrage. Stick gauche haut / bas pour changer d'entrée, gauche / droite pour changer
+de valeur ; OK et Retour sur le Dual Button bleu / rouge (Core2) ou les boutons jaunes droit /
+gauche (AtomS3). Voir `docs/CONFIGURATION_MENU_DESIGN.md`.
+
+Dans `JoystickConfiguration.h` : `DEFAULT_COMM_MODE` et `DEFAULT_ESPNOW_PASSIVE` (valeurs
+par défaut tant qu'aucune préférence n'est enregistrée), `LORA_AIR_RATE`,
+`DEBUG_JOYSTICK_RAW`, `DEBUG_SYSTEM_STATE`, `JOYSTICK_FIRMWARE_VERSION`. Bande, canal et
+débit air doivent correspondre à ceux de la bouée.
 
 ## ✅ État d'Avancement
 

@@ -29,14 +29,18 @@
 #include "BuoyStateManager.h"
 #include "DisplayManager.h"
 #include "CommandManager.h"
+#include "JoystickPreferences.h"
+#include "SetupMenu.h"
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
-// Matériel (v1 AtomS3 / v2 Core2), mode de communication, bande et débit air
-// LoRa, écoute passive ESP-NOW, traces de mise au point : TOUT est dans
+// Matériel (v1 AtomS3 / v2 Core2), débit air LoRa, traces de mise au point :
 // include/JoystickConfiguration.h (le matériel est fixé par l'environnement
-// PlatformIO, le reste s'y édite). Rien à régler dans ce fichier.
+// PlatformIO). Liaison, bande, canal, puissance et écoute ESP-NOW passive :
+// préférences NVS, réglées par le menu de configuration (bouton A maintenu au
+// démarrage), avec les constantes DEFAULT_* de JoystickConfiguration.h pour
+// valeurs par défaut. Rien à régler dans ce fichier.
 //
 // Les bouées sont découvertes automatiquement via leurs broadcasts.
 
@@ -45,7 +49,12 @@
 // ============================================================================
 JoystickManager joystick;
 ESPNowCommunication espNow;
-LoRaCommunication lora(LORA_BAND, LORA_AIR_RATE);
+// Bande, canal et puissance réglés dans setup() d'après les préférences
+LoRaCommunication lora(LoRaBand::BAND_433, LORA_AIR_RATE);
+SetupMenu setupMenu(joystick);
+
+// Configuration de communication en service (préférences NVS, lues au démarrage)
+JoystickSettings activeSettings;
 
 // Instances statiques pour chaque mode
 BuoyStateManager buoyStateESPNow(espNow);
@@ -109,10 +118,6 @@ void setup() {
     // Initialisation du Logger (sortie série uniquement par défaut)
     Logger::init(true, false);  // Serial activé, LCD désactivé
 
-    // Enregistre le mode choisi à la compilation : getModeName() est utilisé
-    // dans les logs et resterait sinon sur sa valeur par défaut.
-    CommunicationConfig::setMode(COMM_MODE);
-
     // Initialisation Serial pour debug (non bloquant)
     //USBSerial.begin(115200);
     //delay(100);  // Court délai pour stabilisation (non bloquant)
@@ -126,12 +131,40 @@ void setup() {
                  JoystickConfiguration::hardwareName(), JOYSTICK_FIRMWARE_VERSION);
     Logger::log("===========================================");
     Logger::log();
+
+    // 1. Initialisation du joystick (I2C) : en premier, le menu de configuration
+    // en a besoin (sticks et boutons)
+    Logger::log("1. Initialisation Joystick...");
+    if (!joystick.begin()) {
+        Logger::log("   -> ERREUR: Echec initialisation joystick");
+        Logger::logf("   -> Verifiez: %s", JoystickConfiguration::wiringHint());
+        // On continue quand même pour tester la communication
+    } else {
+        Logger::log("   -> Joystick: OK");
+    }
+
+    // 1b. Configuration de communication : préférences NVS, menu si bouton A maintenu.
+    // Avant toute initialisation radio : le choix s'applique sans redémarrage.
+    Logger::log();
+    Logger::log("1b. Configuration de communication...");
+    bool fromNvs = false;
+    activeSettings = JoystickPreferences::load(&fromNvs);
+    Logger::log(fromNvs ? "   -> Preferences lues en NVS"
+                        : "   -> Aucune preference enregistree : valeurs par defaut");
+    if (setupMenu.checkBootRequest(activeSettings, fromNvs)) {
+        bool saved = false;
+        activeSettings = setupMenu.run(activeSettings, saved);
+        Logger::log(saved ? "   -> Menu : nouvelle configuration enregistree"
+                          : "   -> Menu : configuration inchangee");
+    }
+    const CommMode commMode = JoystickPreferences::toCommMode(activeSettings);
+    CommunicationConfig::setMode(commMode);
     JoystickConfiguration::logSummary();
+    JoystickPreferences::log(activeSettings, "Configuration de communication");
     Logger::log();
 
-    // 0. Sélection du mode de communication et des managers associés
-    Logger::log("0. Configuration du mode de communication...");
-    if (COMM_MODE == CommMode::ESP_NOW) {
+    // Sélection des managers associés au mode
+    if (commMode == CommMode::ESP_NOW) {
         Logger::log("   -> Mode: ESP-NOW (2.4 GHz)");
         buoyState = &buoyStateESPNow;
         cmdManager = &cmdManagerESPNow;
@@ -143,22 +176,13 @@ void setup() {
         cmdManager = &cmdManagerLora;
         display = &displayLora;
         lora.setDisplayManager(display);
-    }
-    
-    // 1. Initialisation du joystick (I2C)
-    Logger::log();
-    Logger::log("1. Initialisation Joystick...");
-    if (!joystick.begin()) {
-        Logger::log("   -> ERREUR: Echec initialisation joystick");
-        Logger::logf("   -> Verifiez: %s", JoystickConfiguration::wiringHint());
-        // On continue quand même pour tester ESP-NOW
-    } else {
-        Logger::log("   -> Joystick: OK");
+        lora.setBand(commMode == CommMode::LORA_920 ? LoRaBand::BAND_920 : LoRaBand::BAND_433);
+        lora.setRadioSettings(activeSettings.loraChannel, activeSettings.loraPowerDbm);
     }
     
     // 2. Initialisation de la communication
     Logger::log();
-    if (COMM_MODE == CommMode::ESP_NOW) {
+    if (commMode == CommMode::ESP_NOW) {
         Logger::log("2. Initialisation ESP-NOW...");
         if (!espNow.begin()) {
             Logger::log("   -> ERREUR CRITIQUE: Echec initialisation ESP-NOW");
@@ -176,32 +200,32 @@ void setup() {
                 delay(1000);
             }
         } else {
-            Logger::logf("   -> %s: OK (canal %d, %.3f MHz)",
+            Logger::logf("   -> %s: OK (canal %d, %.3f MHz, %d dBm)",
                          CommunicationConfig::getModeName(),
-                         lora.getChannel(), lora.getFrequencyMHz());
+                         lora.getChannel(), lora.getFrequencyMHz(), (int)lora.getTxPowerDbm());
         }
         
-#if JOYSTICK_ESPNOW_PASSIVE
-        // En mode LoRa, initialiser aussi ESP-NOW en écoute passive
-        // pour recevoir les broadcasts de statut des bouées (plus rapide que LoRa)
-        Logger::log("2b. Initialisation ESP-NOW (écoute passive)...");
-        if (!espNow.begin()) {
-            Logger::log("   -> WARNING: Echec init ESP-NOW passif (optionnel)");
+        if (activeSettings.espnowPassive) {
+            // En mode LoRa, initialiser aussi ESP-NOW en écoute passive
+            // pour recevoir les broadcasts de statut des bouées (plus rapide que LoRa)
+            Logger::log("2b. Initialisation ESP-NOW (écoute passive)...");
+            if (!espNow.begin()) {
+                Logger::log("   -> WARNING: Echec init ESP-NOW passif (optionnel)");
+            } else {
+                Logger::log("   -> ESP-NOW passif: OK (réception broadcasts bouées)");
+            }
         } else {
-            Logger::log("   -> ESP-NOW passif: OK (réception broadcasts bouées)");
+            // Radio 2,4 GHz coupée (préférence « ESP-NOW listen » = OFF).
+            // WiFi.mode(WIFI_OFF) est explicite plutôt qu'implicite : ne pas appeler
+            // espNow.begin() suffirait à ne pas allumer la radio, mais le dire
+            // fermement garantit l'etat mesure, et c'est ce qui compte pour un essai.
+            WiFi.mode(WIFI_OFF);
+            Logger::log("2b. ESP-NOW passif: DESACTIVE (preference ESP-NOW listen = OFF)");
+            Logger::log("   -> Radio 2.4 GHz coupee. Essai de portee : comparer le TAUX");
+            Logger::log("      DE RECEPTION du bilan de liaison avec et sans (§5.3).");
+            Logger::log("   -> Les broadcasts d'etat ESP-NOW des bouees ne sont plus recus ;");
+            Logger::log("      seul le LoRa alimente l'affichage.");
         }
-#else
-        // Radio 2,4 GHz coupée — voir JOYSTICK_ESPNOW_PASSIVE dans JoystickConfiguration.h.
-        // WiFi.mode(WIFI_OFF) est explicite plutôt qu'implicite : ne pas appeler
-        // espNow.begin() suffirait à ne pas allumer la radio, mais le dire
-        // fermement garantit l'etat mesure, et c'est ce qui compte pour un essai.
-        WiFi.mode(WIFI_OFF);
-        Logger::log("2b. ESP-NOW passif: DESACTIVE (JOYSTICK_ESPNOW_PASSIVE = 0)");
-        Logger::log("   -> Radio 2.4 GHz coupee. Essai de portee : comparer le TAUX");
-        Logger::log("      DE RECEPTION du bilan de liaison avec et sans (§5.3).");
-        Logger::log("   -> Les broadcasts d'etat ESP-NOW des bouees ne sont plus recus ;");
-        Logger::log("      seul le LoRa alimente l'affichage.");
-#endif
     }
     
     // 3. Préparation pour découverte automatique des bouées
@@ -217,7 +241,7 @@ void setup() {
     buoyState->setDisplayManager(display);
     
     // En mode LoRa, configurer l'écoute passive ESP-NOW
-    if (CommunicationConfig::isLoRa(COMM_MODE)) {
+    if (CommunicationConfig::isLoRa(commMode)) {
         buoyState->setESPNowListener(&espNow);
     }
 
@@ -251,7 +275,7 @@ void setup() {
     display->displayConnecting("Ready");
     
     // En mode LoRa, créer la tâche de réception sur Core 0
-    if (CommunicationConfig::isLoRa(COMM_MODE)) {
+    if (CommunicationConfig::isLoRa(commMode)) {
         Logger::log();
         Logger::log("6. Création tâche LoRa RX sur Core 0...");
         xTaskCreatePinnedToCore(
@@ -497,14 +521,14 @@ void loop() {
     // Mode LoRa : La réception est gérée par loraRxTask() sur Core 0 (non-bloquant)
     
     // Traiter les retry de commandes en attente d'ACK
-    if (CommunicationConfig::isLoRa(COMM_MODE)) {
+    if (CommunicationConfig::isLoRa(CommunicationConfig::getMode())) {
         lora.processCommandRetries();
         // Bilan de liaison toutes les 5 s — instrument d'essai de portee.
         // S'auto-cadence, sans effet hors LoRa.
         // La bouee active est passee au bilan : un changement cloture le palier
         // en cours et remet les compteurs a zero (campagne multi-bouees).
         lora.logLinkQuality(buoyState->getSelectedBuoyId());
-    } else if (COMM_MODE == CommMode::ESP_NOW) {
+    } else if (CommunicationConfig::getMode() == CommMode::ESP_NOW) {
         espNow.processCommandRetries();
     }
     
@@ -527,7 +551,7 @@ void loop() {
     // ========================================================================
     // Décalée d'une demi-période par rapport au heartbeat pour ne pas enchaîner
     // deux émissions dans la même seconde.
-    if (CommunicationConfig::isLoRa(COMM_MODE) &&
+    if (CommunicationConfig::isLoRa(CommunicationConfig::getMode()) &&
         currentTime - lastObservableTime >= OBSERVABLE_INTERVAL &&
         currentTime - lastHeartbeatTime >= HEARTBEAT_INTERVAL / 2) {
         lastObservableTime = currentTime;
@@ -574,7 +598,7 @@ void loop() {
         
         // Afficher les données si la bouée répond (mode-dépendant)
         BuoyInfo* buoyInfo = nullptr;
-        if (COMM_MODE == CommMode::ESP_NOW) {
+        if (CommunicationConfig::getMode() == CommMode::ESP_NOW) {
             buoyInfo = espNow.getBuoyInfo(selectedId);
         } else {
             buoyInfo = lora.getBuoyInfo(selectedId);
@@ -584,11 +608,9 @@ void loop() {
         // Sans écoute passive, cette source n'existe pas : ne pas l'interroger,
         // sinon l'affichage retomberait sur des données jamais rafraîchies.
         BuoyInfo* espNowInfo = nullptr;
-#if JOYSTICK_ESPNOW_PASSIVE
-        if (CommunicationConfig::isLoRa(COMM_MODE)) {
+        if (CommunicationConfig::isLoRa(CommunicationConfig::getMode()) && activeSettings.espnowPassive) {
             espNowInfo = espNow.getBuoyInfo(selectedId);
         }
-#endif
         
         // Choisir la source la plus récente
         if (espNowInfo != nullptr && espNowInfo->registered && 

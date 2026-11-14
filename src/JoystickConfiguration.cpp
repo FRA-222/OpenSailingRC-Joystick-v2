@@ -34,9 +34,8 @@ void JoystickConfiguration::logSummary() {
     Logger::logf("  Materiel      : %s (JOYSTICK_HW=%d)", hardwareName(), (int)JOYSTICK_HARDWARE);
     Logger::logf("  Firmware      : %s", JOYSTICK_FIRMWARE_VERSION);
     Logger::logf("  Communication : %s", CommunicationConfig::getModeName());
-    if (CommunicationConfig::isLoRa(COMM_MODE)) {
+    if (CommunicationConfig::isLoRa(CommunicationConfig::getMode())) {
         Logger::logf("  LoRa UART     : RX=GPIO%d TX=GPIO%d", LORA_RX_PIN, LORA_TX_PIN);
-        Logger::logf("  ESP-NOW passif: %s", JOYSTICK_ESPNOW_PASSIVE ? "actif" : "coupe");
     }
     Logger::logf("  Ecran         : %dx%d", DISPLAY_WIDTH, DISPLAY_HEIGHT);
     Logger::log("------------------------------");

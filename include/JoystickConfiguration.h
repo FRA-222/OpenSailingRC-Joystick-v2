@@ -20,10 +20,17 @@
  * lisible à l'exécution (traces, écran de démarrage).
  *
  * ── Communication ───────────────────────────────────────────────────────────
- * COMM_MODE, LORA_AIR_RATE et JOYSTICK_ESPNOW_PASSIVE se changent ici. Ils
- * doivent correspondre au réglage de la bouée (BuoyConfiguration.cpp) : un
- * désaccord de bande ou de débit air ne produit aucune erreur, seulement un
- * silence total.
+ * Liaison, bande, canal, puissance et écoute ESP-NOW passive se règlent depuis
+ * le menu de configuration (bouton A maintenu au démarrage) et sont conservés
+ * en NVS (JoystickPreferences). DEFAULT_COMM_MODE et DEFAULT_ESPNOW_PASSIVE
+ * ci-dessous n'en sont que les valeurs par défaut, utilisées tant que rien
+ * n'est enregistré (joystick neuf, ou NVS effacée par un flash M5Burner).
+ * Le canal et la puissance par défaut sont ceux de LoRaBandProfiles.h.
+ *
+ * LORA_AIR_RATE reste fixé à la compilation.
+ *
+ * Bande, canal et débit air doivent correspondre au réglage de la bouée : un
+ * désaccord ne produit aucune erreur, seulement un silence total.
  */
 
 /*
@@ -72,22 +79,16 @@ constexpr const char* JOYSTICK_FIRMWARE_VERSION = "1.2.2";
 // ============================================================================
 // COMMUNICATION
 // ============================================================================
+// Mode par défaut, tant qu'aucune préférence n'est enregistrée :
 // - CommMode::ESP_NOW  : ESP-NOW (2,4 GHz, courte portée, rapide)
 // - CommMode::LORA_920 : LoRa module E220-900T22S(JP) 920 MHz
 // - CommMode::LORA_433 : LoRa module E220-400T22S 433 MHz
 //
-// Les deux bandes LoRa partagent tout le protocole : le code commun se teste
-// avec CommunicationConfig::isLoRa(COMM_MODE), et seule la configuration radio
-// (canal, débit air, puissance) dépend de la bande. La fréquence n'étant pas
-// détectable par logiciel, elle doit correspondre au module physiquement
-// branché — et au réglage de la bouée. Le module se configure via son switch
-// M0/M1 (ON = configuration, OFF = normal).
-constexpr CommMode COMM_MODE = CommMode::LORA_433;  // CommMode::ESP_NOW / CommMode::LORA_920 / CommMode::LORA_433
-
-// Bande radio déduite du mode (utilisée par l'instance LoRa)
-constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
-                                   ? LoRaBand::BAND_433
-                                   : LoRaBand::BAND_920;
+// Le mode en service se lit avec CommunicationConfig::getMode(), et le code
+// commun aux deux bandes se teste avec CommunicationConfig::isLoRa(). La bande
+// n'étant pas détectable par logiciel, elle doit correspondre au module
+// physiquement branché — et au réglage de la bouée.
+constexpr CommMode DEFAULT_COMM_MODE = CommMode::LORA_433;  // CommMode::ESP_NOW / CommMode::LORA_920 / CommMode::LORA_433
 
 // Débit air LoRa — DOIT être identique à LORA_AIR_RATE de la bouée.
 // Du plus lent au plus rapide : AIR_2400 / 4800 / 9600 / 19200 / 38400 / 62500.
@@ -95,17 +96,17 @@ constexpr LoRaBand LORA_BAND = (COMM_MODE == CommMode::LORA_433)
 // 9,6 kbps est le débit retenu par les campagnes A.8 / A.9 (GATEWAY_DESIGN.md).
 constexpr LoRaAirRate LORA_AIR_RATE = LoRaAirRate::AIR_9600;
 
-// ── Écoute passive ESP-NOW en mode LoRa ──────────────────────────────────────
-// 1 = comportement nominal : en mode LoRa, ESP-NOW est aussi initialisé pour
-//     recevoir les broadcasts d'état des bouées, plus rapides que le LoRa.
-// 0 = radio 2,4 GHz coupée. Le joystick ne reçoit plus que le LoRa.
+// ── Écoute passive ESP-NOW en mode LoRa (valeur par défaut) ───────────────────
+// true  = en mode LoRa, ESP-NOW est aussi initialisé pour recevoir les
+//         broadcasts d'état des bouées, plus rapides que le LoRa.
+// false = radio 2,4 GHz coupée. Le joystick ne reçoit plus que le LoRa.
 //
 // ⚠️ Ce n'est PAS un simple réglage de confort : c'est l'instrument d'un essai
 // de portée. Les deux radios cohabitent sur la même carte, et les bursts WiFi
 // remontent le plancher de bruit du récepteur 433 colocalisé (5 à 15 dB) et
 // peuvent détruire les trames LoRa qui tombent au mauvais moment.
 // Voir GATEWAY_DESIGN.md §5.3, « ESP-NOW et LoRa sur la même carte ».
-#define JOYSTICK_ESPNOW_PASSIVE 0
+constexpr bool DEFAULT_ESPNOW_PASSIVE = false;
 
 // ============================================================================
 // ESSAIS / MISE AU POINT

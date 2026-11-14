@@ -27,6 +27,8 @@
 #include "BuoyStateManager.h"
 #include "CommandManager.h"
 #include "HardwareConfig.h"
+#include "SetupMenu.h"
+#include "JoystickPreferences.h"
 
 /**
  * @brief Command status for visual feedback
@@ -129,6 +131,31 @@ public:
      * - IDLE: Normal color
      */
     void setCommandStatus(CommandStatus status);
+
+    // ------------------------------------------------------------------------
+    // Menu de configuration (SetupMenu) — rendu propre à chaque matériel.
+    // Statiques : le menu tourne au démarrage, avant que l'instance d'affichage
+    // ne soit choisie (elle dépend de la liaison configurée).
+    // ------------------------------------------------------------------------
+
+    /**
+     * @brief Écran de démarrage : configuration en service et invite « Hold A »
+     * @param settings    Configuration chargée
+     * @param fromNvs     false : valeurs par défaut (rien d'enregistré)
+     * @param holdPercent Progression du maintien du bouton A (0 = pas d'appui)
+     */
+    static void drawSetupBoot(const JoystickSettings& settings, bool fromNvs, uint8_t holdPercent);
+
+    /**
+     * @brief Menu de configuration : liste (Core2) ou une entrée par écran (AtomS3)
+     * @param view Entrées mises en forme par SetupMenu
+     */
+    static void drawSetupMenu(const SetupMenuView& view);
+
+    /**
+     * @brief Message plein écran du menu (« Saved », « Save failed »)
+     */
+    static void drawSetupMessage(const char* title, const char* line);
 
 private:
     BuoyStateManager& buoyMgr;

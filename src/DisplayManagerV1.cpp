@@ -20,6 +20,7 @@
 #include "Logger.h"
 #include "HardwareConfig.h"
 #include "JoystickConfiguration.h"
+#include "LoRaBandProfiles.h"
 
 #if JOYSTICK_HW != 1
 #error "DisplayManagerV1.cpp ne se compile que pour le matériel v1 (JOYSTICK_HW=1)"
@@ -651,4 +652,128 @@ void DisplayManager::displayBootDiagnostic(const HardwareDiagResult& d, uint32_t
 
     M5.Display.fillScreen(TFT_BLACK);
     cache.firstUpdate = true;
+}
+
+// ============================================================================
+// MENU DE CONFIGURATION (AtomS3 128x128) — une entrée par écran
+// ============================================================================
+// Sur 128 px, une liste ne laisserait que des libellés tronqués : on affiche
+// l'entrée sélectionnée seule, en gros, avec sa position (3/6).
+
+void DisplayManager::drawSetupBoot(const JoystickSettings& s, bool fromNvs, uint8_t holdPercent) {
+    M5.Display.setRotation(0);
+    M5.Display.setTextSize(1);
+
+    // Partie fixe redessinée seulement hors maintien : la barre seule évolue
+    if (holdPercent == 0) {
+        M5.Display.fillScreen(TFT_BLACK);
+        M5.Display.setTextDatum(MC_DATUM);
+        M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.drawString(JoystickConfiguration::productName(), 64, 10);
+
+        M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
+        if (s.isLoRa()) {
+            M5.Display.setFont(&fonts::Font4);
+            M5.Display.drawString(String("LoRa ") + (s.loraBand == LORA_BAND_CODE_920 ? "920" : "433"), 64, 40);
+            M5.Display.setFont(&fonts::Font2);
+            char line[24];
+            snprintf(line, sizeof(line), "ch%u  %d dBm", (unsigned)s.loraChannel, (int)s.loraPowerDbm);
+            M5.Display.drawString(line, 64, 66);
+        } else {
+            M5.Display.setFont(&fonts::Font4);
+            M5.Display.drawString("ESP-NOW", 64, 50);
+        }
+
+        M5.Display.setFont(&fonts::Font0);
+        if (!fromNvs) {
+            M5.Display.setTextColor(TFT_DARKGREY, TFT_BLACK);
+            M5.Display.drawString("(defaults)", 64, 84);
+        }
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+        M5.Display.drawString("Hold A: setup", 64, 102);
+    }
+
+    // Barre de progression du maintien
+    const int16_t bx = 14, by = 117, bw = 100, bh = 7;
+    M5.Display.fillRect(bx, by, bw, bh, TFT_BLACK);
+    if (holdPercent > 0) {
+        M5.Display.drawRect(bx, by, bw, bh, TFT_YELLOW);
+        M5.Display.fillRect(bx + 1, by + 1, (int16_t)((bw - 2) * holdPercent / 100), bh - 2, TFT_YELLOW);
+    }
+}
+
+void DisplayManager::drawSetupMenu(const SetupMenuView& v) {
+    M5.Display.setRotation(0);
+    M5.Display.setTextSize(1);
+    M5.Display.fillScreen(TFT_BLACK);
+
+    // En-tête : titre, marque de modification, position
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextDatum(TL_DATUM);
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5.Display.drawString("SETUP", 2, 1);
+    if (v.dirty) {
+        M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+        M5.Display.drawString("*", 50, 1);
+    }
+    char pos[8];
+    snprintf(pos, sizeof(pos), "%u/%u", (unsigned)(v.selected + 1), (unsigned)v.count);
+    M5.Display.setTextDatum(TR_DATUM);
+    M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    M5.Display.drawString(pos, 126, 1);
+    M5.Display.drawFastHLine(0, 18, 128, TFT_DARKGREY);
+
+    if (v.selected >= v.count) return;
+    const SetupMenuItem& it = v.items[v.selected];
+
+    M5.Display.setTextDatum(MC_DATUM);
+    if (it.editable) {
+        // Libellé, puis valeur en gros encadrée de < >
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
+        M5.Display.drawString(it.label, 64, 34);
+
+        M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Display.setFont(&fonts::Font4);
+        // Repli en Font2 si la valeur déborde l'espace entre les flèches
+        if (M5.Display.textWidth(it.value) > 100) M5.Display.setFont(&fonts::Font2);
+        M5.Display.drawString(it.value, 64, 62);
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        M5.Display.drawString("<", 6, 62);
+        M5.Display.drawString(">", 122, 62);
+    } else {
+        // Action : libellé dans un cadre, comme un bouton
+        M5.Display.drawRoundRect(8, 44, 112, 34, 6, TFT_GREEN);
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
+        M5.Display.drawString(it.label, 64, 61);
+    }
+
+    // Précision (21 caractères au plus en Font0)
+    M5.Display.setFont(&fonts::Font0);
+    M5.Display.setTextColor(it.warning ? TFT_ORANGE : TFT_LIGHTGREY, TFT_BLACK);
+    M5.Display.drawString(it.detail, 64, 92);
+
+    // Aide
+    M5.Display.drawFastHLine(0, 106, 128, TFT_DARKGREY);
+    char help[24];
+    snprintf(help, sizeof(help), "%s ok  %s back", v.okName, v.backName);
+    M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    M5.Display.drawString(help, 64, 118);
+}
+
+void DisplayManager::drawSetupMessage(const char* title, const char* line) {
+    M5.Display.setRotation(0);
+    M5.Display.setTextSize(1);
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextDatum(MC_DATUM);
+    M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.drawString(title, 64, 52);
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font0);
+    M5.Display.drawString(line, 64, 82);
 }
