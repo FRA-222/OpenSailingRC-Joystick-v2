@@ -157,6 +157,25 @@ public:
      * @return int Nombre de lignes affichées
      */
     static int getLcdLineCount();
+
+    /**
+     * @brief Écrit les traces émises depuis la tâche WiFi (callbacks ESP-NOW)
+     *
+     * Les appels faits dans la tâche WiFi ne touchent jamais au port série :
+     * Serial.println() + flush() y bloquent la tâche plusieurs millisecondes,
+     * ce qui faisait perdre l'essentiel des trames ESP-NOW émises (mesuré le
+     * 15/11/2026 : ~3 % reçues avec traces, 100 % sans). Le texte est mis dans
+     * un tampon, que cette méthode vide. À appeler à chaque tour de loop().
+     */
+    static void drainDeferred();
+
+    /**
+     * @brief Diffère toutes les traces, quelle que soit la tâche appelante
+     *
+     * Activé à la fin de setup() : les traces ne sortent plus qu'au moment où
+     * loop() appelle drainDeferred(), c'est-à-dire hors émission ESP-NOW.
+     */
+    static void setDeferred(bool enabled);
 };
 
 #endif // LOGGER_H

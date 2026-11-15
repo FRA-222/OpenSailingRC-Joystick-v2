@@ -74,7 +74,7 @@ constexpr tJoystickHardware JOYSTICK_HARDWARE = (tJoystickHardware)JOYSTICK_HW;
 // ============================================================================
 // VERSION FIRMWARE
 // ============================================================================
-constexpr const char* JOYSTICK_FIRMWARE_VERSION = "1.2.2";
+constexpr const char* JOYSTICK_FIRMWARE_VERSION = "1.2.3";
 
 // ============================================================================
 // COMMUNICATION

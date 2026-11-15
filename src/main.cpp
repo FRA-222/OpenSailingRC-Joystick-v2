@@ -291,12 +291,22 @@ void setup() {
     }
     
     delay(2000);
+
+    // À partir d'ici, les traces ne sortent plus qu'entre deux émissions ESP-NOW
+    Logger::drainDeferred();
+    Logger::setDeferred(true);
 }
 
 // ============================================================================
 // LOOP PRINCIPAL
 // ============================================================================
 void loop() {
+    // Traces différées : écrites ici, jamais pendant une émission ESP-NOW
+    // (cf. Logger::drainDeferred() et ESPNowCommunication::isTxInFlight())
+    if (!ESPNowCommunication::isTxInFlight()) {
+        Logger::drainDeferred();
+    }
+
     uint32_t currentTime = millis();
     
     // Maintient une fréquence de loop stable (10Hz)

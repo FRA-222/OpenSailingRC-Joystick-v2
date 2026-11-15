@@ -16,6 +16,7 @@
 #include "BuoyStateManager.h"
 #include "DisplayManager.h"
 #include "Logger.h"
+#include "CommunicationConfig.h"
 
 BuoyStateManager::BuoyStateManager(ICommunication& comm) 
     : comm(comm), espNowListener(nullptr), displayMgr(nullptr) {
@@ -116,6 +117,12 @@ bool BuoyStateManager::isESPNowActiveForBuoy(uint8_t buoyId) {
 }
 
 bool BuoyStateManager::isUsingESPNowData() {
+    // En mode ESP-NOW, l'ESP-NOW est la liaison principale (il n'y a pas
+    // d'écoute passive) : toute donnée vient de lui. Sans ce test, le badge
+    // retombait sur « LoRa : -- dB ».
+    if (CommunicationConfig::getMode() == CommMode::ESP_NOW) {
+        return comm.isBuoyConnected(selectedBuoyId);
+    }
     return isESPNowActiveForBuoy(selectedBuoyId);
 }
 

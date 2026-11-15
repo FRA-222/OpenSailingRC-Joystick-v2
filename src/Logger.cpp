@@ -43,6 +43,55 @@
 #define LOG_FLUSH() LOG_SERIAL.flush()
 #endif
 #include <stdarg.h>
+#include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+// ---------------------------------------------------------------------------
+// Traces différées pour la tâche WiFi
+// ---------------------------------------------------------------------------
+// Les callbacks ESP-NOW (envoi, réception) s'exécutent dans la tâche WiFi.
+// Y écrire sur le port série (println + flush) la bloque plusieurs ms et fait
+// perdre les trames émises. Depuis cette tâche, le texte va dans un tampon
+// circulaire ; loop() le vide par Logger::drainDeferred(). Tampon plein : le
+// texte est perdu (et compté), la tâche WiFi n'attend jamais.
+namespace {
+constexpr size_t DEFER_SIZE = 4096;
+char deferBuf[DEFER_SIZE];
+size_t deferHead = 0;   // prochaine écriture
+size_t deferTail = 0;   // prochaine lecture
+uint32_t deferDropped = 0;
+portMUX_TYPE deferMux = portMUX_INITIALIZER_UNLOCKED;
+bool deferAll = false;   // toutes les traces passent par le tampon (après setup)
+
+bool inWifiTask() {
+    const char* name = pcTaskGetName(nullptr);
+    return name != nullptr && strcmp(name, "wifi") == 0;
+}
+
+bool mustDefer() {
+    return deferAll || inWifiTask();
+}
+
+void deferWrite(const char* text, bool newline) {
+    const size_t len = strlen(text) + (newline ? 1 : 0);
+    portENTER_CRITICAL(&deferMux);
+    const size_t used = (deferHead + DEFER_SIZE - deferTail) % DEFER_SIZE;
+    if (len >= DEFER_SIZE - 1 - used) {
+        deferDropped++;
+    } else {
+        for (const char* c = text; *c; c++) {
+            deferBuf[deferHead] = *c;
+            deferHead = (deferHead + 1) % DEFER_SIZE;
+        }
+        if (newline) {
+            deferBuf[deferHead] = '\n';
+            deferHead = (deferHead + 1) % DEFER_SIZE;
+        }
+    }
+    portEXIT_CRITICAL(&deferMux);
+}
+}  // namespace
 
 // Initialisation des variables statiques
 int Logger::nbLineDisplayed = 0;
@@ -91,6 +140,10 @@ void Logger::init(bool serialEnabled, bool lcdEnabled) {
  * @note Utilise LOG_SERIAL : USBSerial sur AtomS3 (v1), Serial sur Core2 (v2)
  */
 void Logger::log(const String& message) {
+    if (mustDefer()) {
+        if (enableSerialOutput) deferWrite(message.c_str(), true);
+        return;
+    }
     // Sortie sur le port série si activée
     if (enableSerialOutput) {
         LOG_SERIAL.println(message);
@@ -142,6 +195,10 @@ void Logger::logf(const char* format, ...) {
  * @param message Message sous forme de chaîne de caractères à enregistrer
  */
 void Logger::print(const String& message) {
+    if (mustDefer()) {
+        if (enableSerialOutput) deferWrite(message.c_str(), false);
+        return;
+    }
     // Sortie sur le port série si activée
     if (enableSerialOutput) {
         LOG_SERIAL.print(message);
@@ -240,4 +297,40 @@ void Logger::clearLcd() {
  */
 int Logger::getLcdLineCount() {
     return nbLineDisplayed;
+}
+
+void Logger::setDeferred(bool enabled) {
+    deferAll = enabled;
+}
+
+void Logger::drainDeferred() {
+    char chunk[257];
+    bool wrote = false;
+    for (;;) {
+        size_t n = 0;
+        uint32_t dropped = 0;
+        portENTER_CRITICAL(&deferMux);
+        while (deferTail != deferHead && n < sizeof(chunk) - 1) {
+            chunk[n++] = deferBuf[deferTail];
+            deferTail = (deferTail + 1) % DEFER_SIZE;
+        }
+        if (n == 0) {
+            dropped = deferDropped;
+            deferDropped = 0;
+        }
+        portEXIT_CRITICAL(&deferMux);
+        if (n == 0) {
+            if (dropped && enableSerialOutput) {
+                LOG_SERIAL.printf("⚠️  Logger: %lu trace(s) perdue(s) (tampon plein)\n",
+                                  (unsigned long)dropped);
+                wrote = true;
+            }
+            // Port série au repos en sortant : la prochaine émission ESP-NOW
+            // ne doit pas tomber pendant la fin de la sortie UART.
+            if (wrote) LOG_FLUSH();
+            return;
+        }
+        chunk[n] = '\0';
+        if (enableSerialOutput) { LOG_SERIAL.print(chunk); wrote = true; }
+    }
 }

@@ -26,6 +26,12 @@
 
 // Instance statique pour les callbacks
 ESPNowCommunication* ESPNowCommunication::instance = nullptr;
+volatile bool ESPNowCommunication::txInFlight = false;
+volatile uint32_t ESPNowCommunication::txStartMs = 0;
+
+bool ESPNowCommunication::isTxInFlight() {
+    return txInFlight && (millis() - txStartMs) < 50;
+}
 
 ESPNowCommunication::ESPNowCommunication() {
     buoyCount = 0;
@@ -84,6 +90,13 @@ bool ESPNowCommunication::begin() {
     }
     
     Logger::log("✓ ESP-NOW: Initialisé");
+    {
+        // Canal et protocole réellement actifs : doivent être les mêmes sur la bouée
+        uint8_t ch = 0; wifi_second_chan_t ch2; uint8_t proto = 0;
+        esp_wifi_get_channel(&ch, &ch2);
+        esp_wifi_get_protocol(WIFI_IF_STA, &proto);
+        Logger::logf("✓ ESP-NOW: canal %u, protocole 0x%02X (LR = 0x08)", (unsigned)ch, (unsigned)proto);
+    }
     
     // Enregistre les callbacks
     esp_now_register_recv_cb(onDataRecv);
@@ -319,6 +332,7 @@ void ESPNowCommunication::onDataRecv(const uint8_t* mac, const uint8_t* data, in
 
 // Callback statique pour envoi de données
 void ESPNowCommunication::onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
+    txInFlight = false;
     if (status == ESP_NOW_SEND_SUCCESS) {
         Logger::log("✓ ESP-NOW: Envoi réussi");
     } else {
@@ -483,11 +497,16 @@ bool ESPNowCommunication::sendCommandPacket(const CommandPacketESPNow& packet) {
     
     // Envoie via broadcast (permet au Hub de relayer la commande)
     static const uint8_t broadcastAddress[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    // Marque la trame « en vol » : Logger::drainDeferred() n'écrira rien sur
+    // le port série avant le callback d'envoi (cf. isTxInFlight()).
+    txStartMs = millis();
+    txInFlight = true;
     esp_err_t result = esp_now_send(
         broadcastAddress,
         (uint8_t*)&packet,
         sizeof(CommandPacketESPNow)
     );
+    if (result != ESP_OK) txInFlight = false;
     
     if (result == ESP_OK) {
         Logger::logf("→ Commande envoyée à Bouée #%d (type=%d)", packet.targetBuoyId, packet.command);

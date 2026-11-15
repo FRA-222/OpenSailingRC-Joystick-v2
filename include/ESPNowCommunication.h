@@ -126,7 +126,19 @@ public:
      */
     void setDisplayManager(DisplayManager* display);
 
+    /**
+     * @brief Vrai tant qu'une trame émise n'a pas reçu son callback d'envoi
+     *
+     * Pendant ce temps, rien ne doit sortir sur le port série : une écriture
+     * UART simultanée à l'émission Long Range fait perdre la trame (mesuré le
+     * 15/11/2026 sur Core2 : ~3 % reçues sinon). Sécurité : 50 ms au plus.
+     */
+    static bool isTxInFlight();
+
 private:
+    static volatile bool txInFlight;        ///< trame en cours d'émission
+    static volatile uint32_t txStartMs;     ///< millis() de son esp_now_send()
+
     struct BuoyPeer {
         uint8_t buoyId;
         uint8_t macAddress[6];
